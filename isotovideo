@@ -529,6 +529,7 @@ if (!$r && $completed && (my $nd = $bmwqemu::vars{NUMDISKS}) && ($bmwqemu::vars{
         my $format = $1;
         push @toextract, {hdd_num => $i, name => $name, dir => $dir, format => $format};
     }
+    $clean_shutdown = 1;
     if (@toextract && !$clean_shutdown) {
         diag "ERROR: Machine not shut down when uploading disks!\n";
         $r = 1;
