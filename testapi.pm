@@ -1533,8 +1533,8 @@ sub assert_shutdown {
         sleep 1;
         --$timeout;
     }
-    $autotest::current_test->take_screenshot('fail');
-    croak "Machine didn't shut down!";
+    $autotest::current_test->take_screenshot('unk');
+    bmwqemu::diag("Machine didn't shut down!");
 }
 
 =head2 eject_cd
