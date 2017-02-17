@@ -607,7 +607,7 @@ sub start_qemu {
                 # when booting from disk on UEFI, first connected disk gets ",bootindex=0"
                 my $bootindex = ($i == 1 && $vars->{UEFI} && $bootfrom eq "disk") ? ",bootindex=0" : "";
                 push(@params, "-device", "$vars->{HDDMODEL},drive=hd$i" . $bootindex);
-                push(@params, "-drive",  "file=$basedir/l$i,cache=unsafe,if=none,id=hd$i,format=$vars->{HDDFORMAT}");
+                push(@params, "-drive",  "file=$basedir/l$i,cache=unsafe,if=none,id=hd$i,format=$vars->{HDDFORMAT},serial=$i");
             }
         }
 

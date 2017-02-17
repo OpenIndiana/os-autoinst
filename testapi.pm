@@ -1019,7 +1019,7 @@ sub send_key_until_needlematch {
 
 =head2 type_string
 
-  type_string($string [, max_interval => <num> ] [, wait_screen_changes => <num> ] [, secret => 1 ] );
+  type_string($string [, max_interval => <num> ] [, wait_screen_change => <num> ] [, secret => 1 ] );
 
 send a string of characters, mapping them to appropriate key names as necessary
 
@@ -1055,7 +1055,7 @@ sub type_string {
 
     my $max_interval = $args{max_interval}       // 250;
     my $wait         = $args{wait_screen_change} // 0;
-    bmwqemu::log_call(string => $log, max_interval => $max_interval, wait_screen_changes => $wait);
+    bmwqemu::log_call(string => $log, max_interval => $max_interval, wait_screen_change => $wait);
     if ($wait) {
         # split string into an array of pieces of specified size
         # https://stackoverflow.com/questions/372370
@@ -1392,8 +1392,8 @@ sub assert_shutdown {
         sleep 1;
         --$timeout;
     }
-    $autotest::current_test->take_screenshot('fail');
-    croak "Machine didn't shut down!";
+    $autotest::current_test->take_screenshot('unk');
+    bmwqemu::diag("Machine didn't shut down!");
 }
 
 =head2 eject_cd
