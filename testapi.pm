@@ -50,7 +50,7 @@ our @EXPORT = qw($realname $username $password $serialdev %cmd %vars
 
   start_audiocapture assert_recorded_sound
 
-  select_console console reset_consoles
+  select_console console reset_consoles reset_console
 
   upload_asset upload_image data_url assert_shutdown parse_junit_log
   upload_logs
@@ -1341,6 +1341,23 @@ if you did something to the system that affects the console (e.g. trigger reboot
 
 sub reset_consoles {
     query_isotovideo('backend_reset_consoles');
+    return;
+}
+
+=head2 reset_console
+ 
+  reset_console($console);
+
+Will make sure the next select_console will activate the defined console. This is
+important if you did something to the system that affects the console (e.g. trigger
+reboot).
+
+=cut
+
+sub reset_console {
+    my ($console) = @_;
+    bmwqemu::log_call(console => $console);
+    query_isotovideo('backend_reset_console', {testapi_console => $console});
     return;
 }
 
