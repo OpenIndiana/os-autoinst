@@ -148,6 +148,10 @@ sub start_serial_grab {
         # has to be enabled by a namedpipe-to-TCP on HYPERV_SERVER application.
         $chan->exec('nc ' . get_var('HYPERV_SERVER') . ' ' . get_var('HYPERV_SERIAL_PORT'));
     }
+    elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+        $chan->exec('nc ' . get_var('VIRSH_HOSTNAME') . ' ' . get_var('VIRTUALBOX_SERIAL_PORT'));
+        #        $chan->exec('tail -F /root/serial0.txt');
+    }
     else {
         $chan->exec('virsh console ' . $name);
     }
