@@ -1889,9 +1889,10 @@ C<$nocheck> parameter:
 =cut
 
 sub upload_asset {
-    my ($file, $public, $nocheck) = @_;
+    my ($file, $public, $nocheck, $timeout) = @_;
 
-    bmwqemu::log_call(file => $file, public => $public, nocheck => $nocheck);
+    bmwqemu::log_call(file => $file, public => $public, nocheck => $nocheck, timeout => $timeout);
+    $timeout //= 90;
     my $cmd = "curl --form upload=\@$file ";
     $cmd .= "--form target=assets_public " if $public;
     my $basename = basename($file);
