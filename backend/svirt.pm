@@ -136,6 +136,23 @@ sub can_handle {
     return;
 }
 
+sub power {
+    my ($self, $args) = @_;
+    my $action = $args->{action};
+    my $vmname = $self->console('svirt')->name;
+    if ($action eq 'acpi') {
+        if (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+            $self->run_cmd("VBoxManage controlvm $vmname acpipowerbutton");
+        }
+        else {
+            $self->run_cmd("virsh shutdown $vmname");
+        }
+    }
+    else {
+        die "Action '$action' not implemented";
+    }
+}
+
 sub is_shutdown {
     my ($self) = @_;
     my $vmname = $self->console('svirt')->name;
