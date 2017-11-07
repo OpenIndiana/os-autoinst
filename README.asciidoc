@@ -3,6 +3,10 @@ os-autoinst image:https://api.travis-ci.org/os-autoinst/os-autoinst.svg?branch=m
 :author: openSUSE Team at SUSE
 :toc:
 
+OpenIndiana note: You need to use this `os-autoinst` fork for the
+OpenIndiana tests to run properly, upstream `os-autoinst` is missing
+VirtualBox support and several OpenIndiana-specific workarounds.
+
 The OS-autoinst project aims at providing a means to run fully
 automated tests.  Especially to run tests of basic and low-level
 operating system components such as bootloader, kernel, installer and
