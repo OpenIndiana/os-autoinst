@@ -765,6 +765,7 @@ sub start_qemu {
         open(STDERR, ">&", $writer);
         close($reader);
         exec(@params);
+        sleep 3;
         die "failed to exec qemu";
     }
     else {
