@@ -71,6 +71,10 @@ sub do_stop_vm {
             $self->run_cmd("$ps Stop-VM -Force -VMName $vmname -TurnOff");
             $self->run_cmd("$ps Remove-VM -Force -VMName $vmname");
         }
+        elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+            $self->run_cmd("VBoxManage controlvm $vmname poweroff");
+            $self->run_cmd("VBoxManage unregistervm $vmname --delete");
+        }
         else {
             $self->run_cmd("virsh destroy $vmname");
             $self->run_cmd("virsh undefine $vmname");
@@ -125,11 +129,26 @@ sub can_handle {
     my $vars = \%bmwqemu::vars;
     if ($args->{function} eq 'snapshots' && !check_var('HDDFORMAT', 'raw')) {
         # Snapshots via libvirt are supported on KVM and, perhaps, ESXi. Hyper-V uses native tools.
-        if (check_var('VIRSH_VMM_FAMILY', 'kvm') || check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
-            return {ret => 1};
-        }
+        return {ret => 1} if (get_var('VIRSH_VMM_FAMILY', '') =~ /kvm|virtualbox|hyperv/);
     }
     return;
+}
+
+sub power {
+    my ($self, $args) = @_;
+    my $action = $args->{action};
+    my $vmname = $self->console('svirt')->name;
+    if ($action eq 'acpi') {
+        if (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+            $self->run_cmd("VBoxManage controlvm $vmname acpipowerbutton");
+        }
+        else {
+            $self->run_cmd("virsh shutdown $vmname");
+        }
+    }
+    else {
+        die "Action '$action' not implemented";
+    }
 }
 
 sub is_shutdown {
@@ -138,6 +157,9 @@ sub is_shutdown {
     my $rsp;
     if (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
         $rsp = $self->run_cmd("powershell -Command \"if (\$(Get-VM -VMName $vmname \| Where-Object {\$_.state -eq 'Off'})) { exit 1 } else { exit 0 }\"");
+    }
+    elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+        $rsp = $self->run_cmd("VBoxManage list vms | grep $vmname");
     }
     else {
         $rsp = $self->run_cmd("! virsh dominfo $vmname | grep -w 'shut off'");
@@ -154,6 +176,10 @@ sub save_snapshot {
         my $ps = 'powershell -Command';
         $self->run_cmd("$ps Remove-VMSnapshot -VMName $vmname -Name $snapname");
         $rsp = $self->run_cmd("$ps Checkpoint-VM -VMName $vmname -SnapshotName $snapname");
+    }
+    elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+        $self->run_cmd("VBoxManage snapshot $vmname delete $snapname 2> /dev/null");
+        $rsp = $self->run_cmd("VBoxManage snapshot $vmname take $snapname");
     }
     else {
         $self->run_cmd("virsh snapshot-delete $vmname $snapname");
@@ -184,6 +210,9 @@ sub load_snapshot {
                 get_var('VIRSH_GUEST_PASSWORD'));
             die "xfreerdp did not start" if ($i eq 5);
         }
+    }
+    elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+        $rsp = $self->run_cmd("VBoxManage snapshot $vmname delete $snapname");
     }
     else {
         $rsp = $self->run_cmd("virsh snapshot-revert $vmname $snapname");
@@ -220,6 +249,9 @@ sub start_serial_grab {
         # windows named pipes (e.g. \\.\pipe\mypipe). Such a named pipe
         # has to be enabled by a namedpipe-to-TCP on HYPERV_SERVER application.
         $chan->exec('nc ' . get_var('HYPERV_SERVER') . ' ' . get_var('HYPERV_SERIAL_PORT'));
+    }
+    elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+        $chan->exec('nc ' . get_var('VIRSH_HOSTNAME') . ' ' . get_var('VIRTUALBOX_SERIAL_PORT'));
     }
     else {
         $chan->exec('virsh console ' . $name);
