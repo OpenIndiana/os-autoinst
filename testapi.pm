@@ -1595,7 +1595,6 @@ sub check_shutdown {
         sleep 1;
         --$timeout;
     }
-<<<<<<< HEAD
     return 0;
 }
 
