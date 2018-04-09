@@ -1,7 +1,11 @@
-os-autoinst image:https://api.travis-ci.org/os-autoinst/os-autoinst.svg?branch=master[link=https://travis-ci.org/os-autoinst/os-autoinst] image:https://coveralls.io/repos/github/os-autoinst/os-autoinst/badge.svg?branch=master[link=https://coveralls.io/github/os-autoinst/os-autoinst?branch=master]
+os-autoinst
 =========================================================================================================================================================================================================================================================================================================
 :author: openSUSE Team at SUSE
 :toc:
+
+OpenIndiana note: You need to use this `os-autoinst` fork for the
+OpenIndiana tests to run properly, upstream `os-autoinst` is missing
+VirtualBox support and several OpenIndiana-specific workarounds.
 
 The OS-autoinst project aims at providing a means to run fully
 automated tests.  Especially to run tests of basic and low-level

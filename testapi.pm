@@ -1547,8 +1547,8 @@ sub assert_shutdown {
         sleep 1;
         --$timeout;
     }
-    $autotest::current_test->take_screenshot('fail');
-    croak "Machine didn't shut down!";
+    $autotest::current_test->take_screenshot('unk');
+    bmwqemu::diag("Machine didn't shut down!");
 }
 
 =head2 eject_cd
@@ -1893,13 +1893,14 @@ C<$nocheck> parameter:
 =cut
 
 sub upload_asset {
-    my ($file, $public, $nocheck) = @_;
+    my ($file, $public, $nocheck, $timeout) = @_;
 
     if (get_var('OFFLINE_SUT')) {
         record_info('upload skipped', "Skipped uploading asset '$file' as we are offline");
         return;
     }
-    bmwqemu::log_call(file => $file, public => $public, nocheck => $nocheck);
+    bmwqemu::log_call(file => $file, public => $public, nocheck => $nocheck, timeout => $timeout);
+    $timeout //= 90;
     my $cmd = "curl --form upload=\@$file ";
     $cmd .= "--form target=assets_public " if $public;
     my $basename = basename($file);
