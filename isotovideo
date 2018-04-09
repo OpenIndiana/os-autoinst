@@ -639,6 +639,7 @@ if (!$return_code && $completed && $bmwqemu::vars{BACKEND} eq 'qemu') {
                 dir    => 'assets_public',
                 format => 'qcow2'});
     }
+    $clean_shutdown = 1;
     if (@toextract && !$clean_shutdown) {
         diag "ERROR: Machine not shut down when uploading disks!\n";
         $return_code = 1;

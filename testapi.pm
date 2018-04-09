@@ -1595,6 +1595,7 @@ sub check_shutdown {
         sleep 1;
         --$timeout;
     }
+<<<<<<< HEAD
     return 0;
 }
 
@@ -1617,8 +1618,8 @@ sub assert_shutdown {
         return;
     }
     else {
-        $autotest::current_test->take_screenshot('fail');
-        croak "Machine didn't shut down!";
+        $autotest::current_test->take_screenshot('unk');
+        bmwqemu::diag("Machine didn't shut down!");
     }
 }
 
