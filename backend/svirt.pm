@@ -80,6 +80,7 @@ sub do_stop_vm {
             $self->run_cmd("VBoxManage controlvm $vmname poweroff");
             bmwqemu::diag "Unregister & delete $vmname";
             $self->run_cmd("VBoxManage controlvm $vmname poweroff");
+            bmwqemu::diag "Unregister & delete $vmname";
             $self->run_cmd("VBoxManage unregistervm $vmname --delete");
         }
         else {
