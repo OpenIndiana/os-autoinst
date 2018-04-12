@@ -545,8 +545,8 @@ sub run_cmd {
     my ($self, $cmd) = @_;
 
     my $chan = $self->{ssh}->channel();
-    $chan->exec($cmd);
     bmwqemu::diag "Command executed: $cmd";
+    $chan->exec($cmd);
     get_ssh_output($chan);
     $chan->send_eof;
     my $ret = $chan->exit_status();
