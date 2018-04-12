@@ -72,7 +72,13 @@ sub do_stop_vm {
             $self->run_cmd("$ps Remove-VM -Force -VMName $vmname");
         }
         elsif (check_var('VIRSH_VMM_FAMILY', 'virtualbox')) {
+            bmwqemu::diag "Terminate $vmname process";
+            $self->run_cmd("pkill -f VBoxHeadless.*$vmname");
+            bmwqemu::diag "Kill $vmname process";
+            $self->run_cmd("pkill -f -9 VBoxHeadless.*$vmname");
+            bmwqemu::diag "Poweroff $vmname";
             $self->run_cmd("VBoxManage controlvm $vmname poweroff");
+            bmwqemu::diag "Unregister & delete $vmname";
             $self->run_cmd("VBoxManage unregistervm $vmname --delete");
         }
         else {
