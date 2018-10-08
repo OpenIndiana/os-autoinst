@@ -1967,13 +1967,14 @@ C<$nocheck> parameter:
 =cut
 
 sub upload_asset {
-    my ($file, $public, $nocheck) = @_;
+    my ($file, $public, $nocheck, $timeout) = @_;
+    $timeout //= 90;
 
     if (get_var('OFFLINE_SUT')) {
         record_info('upload skipped', "Skipped uploading asset '$file' as we are offline");
         return;
     }
-    bmwqemu::log_call(file => $file, public => $public, nocheck => $nocheck);
+    bmwqemu::log_call(file => $file, public => $public, nocheck => $nocheck, timeout => $timeout);
     my $cmd = "curl --form upload=\@$file ";
     $cmd .= "--form target=assets_public " if $public;
     my $basename = basename($file);
@@ -1982,7 +1983,7 @@ sub upload_asset {
         type_string("$cmd\n");
     }
     else {
-        return assert_script_run($cmd);
+        return assert_script_run($cmd, $timeout);
     }
 }
 
