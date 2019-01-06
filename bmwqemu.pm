@@ -15,30 +15,32 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package bmwqemu;
+
 use strict;
 use warnings;
+use autodie ':all';
+
 use Time::HiRes qw(sleep gettimeofday);
 use IO::Socket;
 use Fcntl ':flock';
-
 use POSIX;
 use Carp;
-use JSON;
+use Mojo::JSON;    # booleans
+use Cpanel::JSON::XS ();
 use File::Path 'remove_tree';
 use Data::Dumper;
 use Mojo::Log;
 use File::Spec::Functions;
-use base 'Exporter';
-use Exporter;
+use Exporter 'import';
 use POSIX 'strftime';
 use Time::HiRes 'gettimeofday';
+
 our $VERSION;
 our @EXPORT    = qw(fileContent save_vars);
 our @EXPORT_OK = qw(diag);
 
 use backend::driver;
 require IPC::System::Simple;
-use autodie ':all';
 
 sub mydie;
 
@@ -75,7 +77,7 @@ sub load_vars {
     my $fh;
     eval { open($fh, '<', $fn) };
     return 0 if $@;
-    eval { $ret = JSON->new->relaxed->decode(<$fh>); };
+    eval { $ret = Cpanel::JSON::XS->new->relaxed->decode(<$fh>); };
     die "parse error in vars.json:\n$@" if $@;
     close($fh);
     %vars = %{$ret};
@@ -83,15 +85,22 @@ sub load_vars {
 }
 
 sub save_vars {
+    my (%args) = @_;
     my $fn = "vars.json";
     unlink "vars.json" if -e "vars.json";
     open(my $fd, ">", $fn);
     flock($fd, LOCK_EX) or die "cannot lock vars.json: $!\n";
     truncate($fd, 0) or die "cannot truncate vars.json: $!\n";
 
+    my $write_vars = \%vars;
+    if ($args{no_secret}) {
+        $write_vars = {};
+        $write_vars->{$_} = $vars{$_} for (grep !/^_SECRET_/, keys(%vars));
+    }
+
     # make sure the JSON is sorted
-    my $json = JSON->new->pretty->canonical;
-    print $fd $json->encode(\%vars);
+    my $json = Cpanel::JSON::XS->new->pretty->canonical;
+    print $fd $json->encode($write_vars);
     close($fd);
     return;
 }
@@ -130,7 +139,7 @@ sub init {
             my ($time, $level, @lines) = @_;
             # Unfortunately $time doesn't have the precision we want. So we need to use Time::HiRes
             $time = gettimeofday;
-            return sprintf(strftime("[%FT%T.%%04d %Z] [$level] ", localtime($time)), 1000 * ($time - int($time))) . join("\n", @lines, '');
+            return sprintf(strftime("[%FT%T.%%03d %Z] [$level] ", localtime($time)), 1000 * ($time - int($time))) . join("\n", @lines, '');
 
         });
 }
@@ -190,7 +199,7 @@ sub log_format_callback {
     my ($time, $level, @lines) = @_;
     # Unfortunately $time doesn't have the precision we want. So we need to use Time::HiRes
     $time = gettimeofday;
-    return sprintf(strftime("[%FT%T.%%04d %Z] [$level] ", localtime($time)), 1000 * ($time - int($time))) . join("\n", @lines, '');
+    return sprintf(strftime("[%FT%T.%%03d %Z] [$level] ", localtime($time)), 1000 * ($time - int($time))) . join("\n", @lines, '');
 }
 
 sub diag {
@@ -307,9 +316,9 @@ sub mydie {
 # store the obj as json into the given filename
 sub save_json_file {
     my ($result, $fn) = @_;
-
     open(my $fd, ">", "$fn.new");
-    print $fd to_json($result, {pretty => 1});
+    my $json = Cpanel::JSON::XS->new->pretty->canonical->encode($result);
+    print $fd $json;
     close($fd);
     return rename("$fn.new", $fn);
 }

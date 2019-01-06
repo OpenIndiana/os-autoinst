@@ -11,8 +11,8 @@ use File::Path 'make_path';
 use File::Temp 'tempdir';
 
 # optional but very useful
-eval 'use Test::More::Color';                 ## no critic
-eval 'use Test::More::Color "foreground"';    ## no critic
+eval 'use Test::More::Color';
+eval 'use Test::More::Color "foreground"';
 
 BEGIN {
     unshift @INC, '..';
@@ -329,13 +329,40 @@ my $workaround = needle->new($data_dir . "login_sddm.ref.workaround.imperfect.js
 # test that a perfect non-workaround match is preferred to imperfect
 # non-workaround and workaround matches
 $img1 = tinycv::read($data_dir . "login_sddm.test.png");
-$res = $img1->search([$perfect, $imperfect, $workaround], 0.9, 0);
+$res  = $img1->search([$perfect, $imperfect, $workaround], 0.9, 0);
 is($res->{needle}->{name}, 'login_sddm.ref.perfect', "perfect match should win");
 
 # test that when two equal matches fight and one is a workaround, that
 # one wins
 $res = $img1->search([$imperfect, $workaround], 0.9, 0);
 is($res->{needle}->{name}, 'login_sddm.ref.workaround.imperfect', "workaround match should win");
+
+# test caching via needle->get_image
+needle::clean_image_cache(0);
+is(needle::image_cache_size, 0, 'image cache completely cleaned');
+$needle        = needle->new($data_dir . 'other-desktop-dvd-20140904.json');
+$needle->{png} = $data_dir . 'other-desktop-dvd-20140904.test.png';
+$img1          = $needle->get_image;
+ok(defined $img1, 'image returned');
+is(needle::image_cache_size, 1,     'cache size increased');
+is($needle->get_image,       $img1, 'cached image returned on next call');
+is(needle::image_cache_size, 1,     'cache size not further increased');
+my $other_needle = needle->new($data_dir . 'xorg_vt-Xorg-20140729.json');
+$other_needle->{png} = $data_dir . 'xorg_vt-Xorg-20140729.test.png';
+$img2 = $other_needle->get_image;
+ok($img2 != $img1, 'different image returned for other needle instance');
+is(needle::image_cache_size, 2, 'cache size increased');
+needle::clean_image_cache(2);
+is(needle::image_cache_size, 2,     'cleaning cache to keep only 2 images should not affect cache size');
+is($other_needle->get_image, $img2, 'cached image still returned');
+is($needle->get_image,       $img1, 'cached image still returned');
+needle::clean_image_cache(1);
+ok($other_needle->get_image != $img2, 'cleaning cache to keep 1 image deleted $img2');
+is($needle->get_image, $img1, 'cleaning cache to keep 1 image kept $img1');
+$img2 = $other_needle->get_image;    # make $img2 the most recently used
+needle::clean_image_cache(1);
+is($other_needle->get_image, $img2, 'cleaning cache to keep 1 image kept $img2');
+ok($needle->get_image != $img1, 'cleaning cache to keep 1 image deleted $img1');
 
 # test needle->file is relative to default prjdir
 is($needle->{file}, 'data/other-desktop-dvd-20140904.json', 'needle json path is relative to prjdir');

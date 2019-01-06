@@ -15,11 +15,12 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package autotest;
+
 use strict;
+use warnings;
+
 use bmwqemu;
 use Exporter 'import';
-our @EXPORT_OK = qw(loadtest $current_test $selected_console $last_milestone_console query_isotovideo);
-
 use File::Basename;
 use File::Spec;
 use Socket;
@@ -29,6 +30,8 @@ use cv;
 use Scalar::Util 'blessed';
 use Mojo::IOLoop::ReadWriteProcess 'process';
 use Mojo::IOLoop::ReadWriteProcess::Session 'session';
+
+our @EXPORT_OK = qw(loadtest $current_test $selected_console $last_milestone_console query_isotovideo);
 
 our %tests;        # scheduled or run tests
 our @testorder;    # for keeping them in order
@@ -98,11 +101,7 @@ sub loadtest {
     my ($script, %args) = @_;
     my $casedir     = $bmwqemu::vars{CASEDIR};
     my $script_path = find_script($script);
-    unless ($script_path =~ m,(\w+)/([^/]+)\.pm$,) {
-        die "loadtest: script path '$script_path' does not match required pattern \\w.+/[^/]+.pm\n";
-    }
-    my $category = $1;
-    my $name     = $2;
+    my ($name, $category) = parse_test_path($script_path);
     my $test;
     my $fullname = "$category-$name";
     # perl code generating perl code is overcool
@@ -112,7 +111,7 @@ sub loadtest {
     my $basename = dirname($script_path);
     $code .= "use lib '$basename';";
     $code .= "require '$script_path';";
-    eval $code;    ## no critic
+    eval $code;
     if ($@) {
         my $msg = "error on $script: $@";
         bmwqemu::diag($msg);
@@ -152,6 +151,23 @@ our $current_test;
 our $selected_console;
 our $last_milestone;
 our $last_milestone_console;
+
+sub parse_test_path {
+    my ($script_path) = @_;
+    unless ($script_path =~ m,(\w+)/([^/]+)\.pm$,) {
+        die "loadtest: script path '$script_path' does not match required pattern \\w.+/[^/]+.pm\n";
+    }
+    my $category = $1;
+    my $name     = $2;
+    if ($category ne 'other') {
+        # show full folder hierachy as category for non-sideloaded tests
+        my $pattern = qr,(tests/[^/]+/)?tests/([\w/]+)/([^/]+)\.pm$,;
+        if ($script_path =~ $pattern) {
+            $category = $2;
+        }
+    }
+    return ($name, $category);
+}
 
 sub set_current_test {
     ($current_test) = @_;
@@ -201,7 +217,7 @@ sub run_all {
         $died = 1;    # test execution died
     }
     eval {
-        bmwqemu::save_vars();
+        bmwqemu::save_vars(no_secret => 1);
         myjsonrpc::send_json($isotovideo, {cmd => 'tests_done', died => $died, completed => $completed});
     };
     close $isotovideo;
@@ -275,7 +291,7 @@ sub postrun_hook {
     # run postrun test code after VM is stopped
     if (-f "$bmwqemu::vars{CASEDIR}/postrun.pm") {
         bmwqemu::diag "running postrun step";
-        eval { require "$bmwqemu::vars{CASEDIR}/postrun.pm"; };    ## no critic
+        eval { require "$bmwqemu::vars{CASEDIR}/postrun.pm" };
         if ($@) {
             bmwqemu::diag "postrun step FAIL:";
             warn $@;
@@ -354,12 +370,16 @@ sub runalltests {
                     bmwqemu::stop_vm();
                     return 0;
                 }
-                elsif (!$flags->{norollback} && $last_milestone) {
+                elsif (!$flags->{no_rollback} && $last_milestone) {
                     load_snapshot('lastgood');
                     $last_milestone->rollback_activated_consoles();
                 }
             }
             else {
+                if (!$flags->{no_rollback} && $last_milestone && $flags->{always_rollback}) {
+                    load_snapshot('lastgood');
+                    $last_milestone->rollback_activated_consoles();
+                }
                 if ($snapshots_supported && ($flags->{milestone} || $bmwqemu::vars{TESTDEBUG})) {
                     make_snapshot('lastgood');
                     $last_milestone         = $t;

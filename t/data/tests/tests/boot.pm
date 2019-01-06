@@ -13,11 +13,19 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
-use base "basetest";
 use strict;
+use warnings;
+
+use base "basetest";
+
 use testapi;
 
 sub run {
+    unless (get_var('INTEGRATION_TESTS')) {
+        freeze_vm();
+        diag "Simply freeze the vm and resume right before the first assert screen is done";
+        resume_vm();
+    }
     # just assume the first screen has a timeout so we should make sure not to miss it
     assert_screen 'core', 15, no_wait => 1;
     # different variants of parameter selection
@@ -25,10 +33,10 @@ sub run {
     assert_screen 'core', no_wait => 1;
     send_key 'ret';
 
-    # set timeout to 15 seconds so we don't waste too much time here when testing for
-    #  pausing on assert_screen timeout
     if (get_var('TESTING_ASSERT_SCREEN_TIMEOUT')) {
-        assert_screen 'on_prompt', timeout => 15;
+        # set timeout to 10 minutes so we can't miss the situation when we're waiting for the assert_screen to timeout
+        # (test uses 'Skip timeout' so this won't actually delay the test execution)
+        assert_screen 'on_prompt', timeout => 600;
     }
     else {
         assert_screen 'on_prompt', 90;

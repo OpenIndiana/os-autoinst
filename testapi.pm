@@ -59,7 +59,7 @@ our @EXPORT = qw($realname $username $password $serialdev %cmd %vars
   upload_asset data_url check_shutdown assert_shutdown parse_junit_log parse_extra_log upload_logs
 
   wait_idle wait_screen_change assert_screen_change wait_still_screen wait_serial
-  record_soft_failure record_info
+  record_soft_failure record_info force_soft_failure
   become_root x11_start_program ensure_installed eject_cd power
 
   save_memory_dump save_storage_drives freeze_vm resume_vm
@@ -116,16 +116,15 @@ Used for internal initialization, do not call from tests.
 =cut
 
 sub init {
-    if (get_var('SERIALDEV')) {
-        $serialdev = get_var('SERIALDEV');
-    }
-    elsif (get_var('OFW') || check_var('BACKEND', 's390x')) {
+    if (get_var('OFW') || check_var('BACKEND', 's390x')) {
         $serialdev = "hvc0";
+    }
+    elsif (get_var('SERIALDEV')) {
+        $serialdev = get_var('SERIALDEV');
     }
     else {
         $serialdev = 'ttyS0';
     }
-    $serialdev = 'ttyS1' if check_var('BACKEND', 'ipmi');
     return;
 }
 
@@ -141,7 +140,6 @@ You can use distribution object to implement distribution specific helpers.
 
 =cut
 
-## no critic (ProhibitSubroutinePrototypes)
 sub set_distribution {
     ($distri) = @_;
     return $distri->init();
@@ -165,11 +163,16 @@ sub save_screenshot {
 
 =head2 record_soft_failure
 
+=for stopwords softfail
+
   record_soft_failure([$reason]);
 
 Record a soft failure on the current test modules result. The result will
 still be counted as a success. Use this to mark where workarounds are applied.
-Takes an optional C<$reason> string which is recorded in the log file.
+Takes an optional C<$reason> string which is recorded in the log file. See
+C<force_soft_failure> to forcefully override a failed test module status from
+a C<post_fail_hook> or C<record_info> when the status should not be
+influenced.
 
 =cut
 
@@ -214,6 +217,26 @@ sub record_info {
     $autotest::current_test->record_resultfile($title, $output, %nargs);
 }
 
+=head2 force_soft_failure
+
+=for stopwords softfail
+
+  force_soft_failure([$reason]);
+
+Like C<record_soft_failure> but overrides the test module status to a softfail
+status even if the module would be set to fail otherwise. This can be used for
+easier tracking of known issues without needing to handle failed tests a lot.
+
+=cut
+
+sub force_soft_failure {
+    my ($reason) = @_;
+    bmwqemu::log_call(reason => $reason);
+
+    $autotest::current_test->record_soft_failure_result($reason, force_status => 1);
+    $autotest::current_test->{dents}++;
+}
+
 sub _handle_found_needle {
     my ($foundneedle, $rsp, $tags) = @_;
     # convert the needle back to an object
@@ -238,14 +261,32 @@ sub _check_backend_response {
         return _handle_found_needle($foundneedle, $rsp, $tags);
     }
     elsif ($rsp->{timeout}) {
-        my $method = $check ? 'check_screen' : 'assert_screen';
+        my $method         = $check ? 'check_screen' : 'assert_screen';
         my $status_message = "match=" . join(',', @$tags) . " timed out after $timeout ($method)";
         bmwqemu::fctres($status_message);
 
-        # make and upload a screenshot because we might want to create a new needle from this so far unexpected screen
-        my $current_test = $autotest::current_test;
-        $current_test->take_screenshot();
-        $current_test->save_test_result();
+        # add the final mismatch as 'unk' result to be able to create a new needle from it
+        # note: add the screenshot only if configured to pause on timeout - otherwise we would
+        #       record each failure twice
+        my $failed_screens = $rsp->{failed_screens};
+        my $final_mismatch = $failed_screens->[-1];
+        if (query_isotovideo(is_configured_to_pause_on_timeout => {check => $check})) {
+            my $current_test = $autotest::current_test;
+            if ($final_mismatch) {
+                $autotest::current_test->record_screenfail(
+                    img     => tinycv::from_ppm(decode_base64($final_mismatch->{image})),
+                    needles => $final_mismatch->{candidates},
+                    tags    => $tags,
+                    result  => 'unk',
+                    frame   => $final_mismatch->{frame},
+                );
+            }
+            else {
+                bmwqemu::fctwarn("ran into $method timeout but there's no final mismatch - just taking a screenshot");
+                $current_test->take_screenshot();
+            }
+            $current_test->save_test_result();
+        }
 
         # do a special rpc call to isotovideo which will block if the test should be paused
         # (if the test should not be paused this call will return 0; on resume (after pause) it will return 1)
@@ -255,14 +296,12 @@ sub _check_backend_response {
                 check => $check,
         }) and return 'try_again';
 
-        my $failed_screens = $rsp->{failed_screens};
-        my $final_mismatch = $failed_screens->[-1];
         if ($check) {
             # only care for the last one
             $failed_screens = [$final_mismatch];
         }
         for my $l (@$failed_screens) {
-            my $img = tinycv::from_ppm(decode_base64($l->{image}));
+            my $img    = tinycv::from_ppm(decode_base64($l->{image}));
             my $result = $check ? 'unk' : 'fail';
             $result = 'unk' if ($l != $final_mismatch);
             if ($rsp->{saveresult}) {
@@ -652,6 +691,7 @@ sub get_required_var {
   set_var($variable, $value [, reload_needles => 1] );
 
 Set test variable C<$variable> to value C<$value>.
+Variables starting with C<_SECRET_> will not appear in the vars.json file.
 
 Specify a true value for the C<reload_needles> flag to trigger a reloading
 of needles in the backend and call the cleanup handler with the new variables
@@ -741,7 +781,7 @@ sub is_serial_terminal {
     state $last_seen = '';
     if (defined current_console() && current_console() ne $last_seen) {
         $last_seen = current_console();
-        $ret = query_isotovideo('backend_is_serial_terminal', {});
+        $ret       = query_isotovideo('backend_is_serial_terminal', {});
     }
     return $ret->{yesorno};
 }
@@ -773,7 +813,7 @@ sub wait_serial {
     bmwqemu::log_call(%nargs);
     $nargs{timeout} = bmwqemu::scale_timeout($nargs{timeout});
 
-    my $ret = query_isotovideo('backend_wait_serial', \%nargs);
+    my $ret     = query_isotovideo('backend_wait_serial', \%nargs);
     my $matched = $ret->{matched};
 
     if ($expect_not_found) {
@@ -1031,7 +1071,7 @@ sub validate_script_output($&;$) {
     $wait ||= 30;
 
     my $output = script_output($script, $wait);
-    my $res = 'ok';
+    my $res    = 'ok';
 
     # set $_ so the callbacks can be simpler code
     $_ = $output;
@@ -1212,9 +1252,9 @@ sub type_string {
         return;
     }
 
-    my $max_interval = $args{max_interval} // 250;
+    my $max_interval = $args{max_interval}       // 250;
     my $wait         = $args{wait_screen_change} // 0;
-    my $wait_still   = $args{wait_still_screen} // 0;
+    my $wait_still   = $args{wait_still_screen}  // 0;
     bmwqemu::log_call(string => $log, max_interval => $max_interval, wait_screen_changes => $wait, wait_still_screen => $wait_still);
     if ($wait) {
         # split string into an array of pieces of specified size
@@ -1503,7 +1543,7 @@ I<Only supported by qemu backend.>
 =cut
 
 sub start_audiocapture {
-    my $fn = $autotest::current_test->capture_filename;
+    my $fn       = $autotest::current_test->capture_filename;
     my $filename = join('/', bmwqemu::result_dir(), $fn);
     bmwqemu::log_call(filename => $filename);
     return query_isotovideo('backend_start_audiocapture', {filename => $filename});
@@ -1512,7 +1552,7 @@ sub start_audiocapture {
 sub _check_or_assert_sound {
     my ($mustmatch, $check) = @_;
 
-    my $result = $autotest::current_test->stop_audiocapture();
+    my $result  = $autotest::current_test->stop_audiocapture();
     my $wavfile = join('/', bmwqemu::result_dir(), $result->{audio});
     system("snd2png $wavfile $result->{audio}.png");
 
@@ -1697,20 +1737,21 @@ sub save_storage_drives {
   freeze_vm;
 
 If the backend supports it, freeze the virtual machine. This will allow the
-virtual machine to be paused/frozen within the test, but only from the
-post_fail_hook. So that memory and disk dumps can be extracted without any
-risk of data changing.
-
-Call this method to ensure memory and disk dump refer to the same machine state.
+virtual machine to be paused/frozen within the test, it is recommended to call
+this within a C<post_fail_hook> so that memory and disk dumps can be extracted
+without any risk of data changing, or in rare cases call it before the tests
+tests have already begun, to avoid unexpected behaviour.
 
 I<Currently only qemu backend is supported.>
 
 =cut
 
 sub freeze_vm {
-    #While it might be a good idea to allow the user to stop the vm within a test
-    #we're not allowing them to do that outside a post_fail_hook.
-    die "Method should be called within a post_fail_hook" unless ((caller(1))[3]) =~ /post_fail_hook/;
+    # While it might be a good idea to allow the user to stop the vm within a test
+    # we're not encouraging them to do that outside a post_fail_hook or at any point
+    # in the test code.
+    bmwqemu::diag "Call freeze_vm within a post_fail_hook or very early in your test"
+      unless ((caller(1))[3]) =~ /post_fail_hook/;
     bmwqemu::log_call();
     query_isotovideo('backend_freeze_vm');
 }

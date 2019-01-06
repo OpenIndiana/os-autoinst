@@ -13,9 +13,14 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 package consoles::virtio_terminal;
+
 use 5.018;
+use strict;
 use warnings;
 use autodie;
+
+use base 'consoles::console';
+
 use Socket qw(SOCK_NONBLOCK PF_UNIX SOCK_STREAM sockaddr_un);
 use Errno qw(EAGAIN EWOULDBLOCK);
 use English -no_match_vars;
@@ -23,9 +28,7 @@ use Carp 'croak';
 use Scalar::Util 'blessed';
 use Cwd;
 use consoles::virtio_screen ();
-use testapi 'get_var';
-
-use base 'consoles::console';
+use testapi 'check_var';
 
 our $VERSION;
 
@@ -132,14 +135,14 @@ sub open_socket {
 
 sub activate {
     my ($self) = @_;
-    if (get_var('VIRTIO_CONSOLE')) {
+    if (!check_var('VIRTIO_CONSOLE', 0)) {
         $self->{socket_fd}              = $self->open_socket unless $self->{socket_fd};
         $self->{screen}                 = consoles::virtio_screen::->new($self->{socket_fd});
         $self->{screen}->{carry_buffer} = $self->{preload_buffer};
         $self->{preload_buffer}         = '';
     }
     else {
-        croak 'VIRTIO_CONSOLE is not set, so no virtio-serial and virtconsole devices will be available to use with this console.';
+        croak 'VIRTIO_CONSOLE is set 0, so no virtio-serial and virtconsole devices will be available to use with this console.';
     }
     return;
 }

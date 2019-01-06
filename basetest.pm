@@ -15,13 +15,14 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package basetest;
+
 use strict;
 use warnings;
 use autodie ':all';
+
 use bmwqemu ();
 use ocr;
 use Time::HiRes;
-use JSON;
 use POSIX;
 use testapi  ();
 use autotest ();
@@ -105,7 +106,8 @@ Return a hash of flags that are either there or not
   'fatal'          - abort whole test suite if this fails (and set overall state 'failed')
   'ignore_failure' - if this module fails, it will not affect the overall result at all
   'milestone'      - after this test succeeds, update 'lastgood'
-  'norollback'     - don't roll back to 'lastgood' snapshot if this fails
+  'no_rollback'     - don't roll back to 'lastgood' snapshot if this fails
+  'always_rollback' - roll back to 'lastgood' snapshot even if this does not fail
 
 =cut
 
@@ -201,12 +203,12 @@ sub _serialize_match {
     if (my $unregistered = $cand->{needle}->{unregistered}) {
         $h->{unregistered} = $unregistered;
     }
-    for my $a (@{$cand->{area}}) {
+    for my $area (@{$cand->{area}}) {
         my $na = {};
         for my $i (qw(x y w h result)) {
-            $na->{$i} = $a->{$i};
+            $na->{$i} = $area->{$i};
         }
-        $na->{similarity} = int($a->{similarity} * 100);
+        $na->{similarity} = int($area->{similarity} * 100);
         push @{$h->{area}}, $na;
     }
 
@@ -422,7 +424,7 @@ within the openQA web interface.
 sub record_resultfile {
     my ($self, $title, $output, %nargs) = @_;
     my $filename = $self->next_resultname('txt', $nargs{resultname});
-    my $detail = {
+    my $detail   = {
         title  => $title,
         result => $nargs{result},
         text   => $filename,
@@ -451,13 +453,12 @@ sub record_serialresult {
 }
 
 sub record_soft_failure_result {
-    my ($self, $reason) = @_;
+    my ($self, $reason, %args) = @_;
     $reason //= '(no reason specified)';
 
-    my $result = $self->record_testresult('unk');
-    $self->_result_add_screenshot($result);
+    my $result = $self->record_testresult('softfail', %args);
     my $output = "# Soft Failure:\n$reason\n";
-    $self->record_resultfile('Soft Failed', $output, result => $result);
+    $self->record_resultfile('Soft Failed', $output, %$result);
     return;
 }
 
@@ -465,36 +466,47 @@ sub register_extra_test_results {
     my ($self, $tests) = @_;
 
     $self->{extra_test_results} //= [];
-    push @{$self->{extra_test_results}}, @$tests;
+    foreach my $t (@{$tests}) {
+        $t->{script} = $self->{script} if (!defined($t->{script}) || $t->{script} eq 'unk');
+        push @{$self->{extra_test_results}}, $t;
+    }
     return;
 }
 
 =head2 record_testresult
 
-generic function that adds a test result to results and re-computes overall state
+Makes a new test detail with the specified $result, adds it to the
+test details and returns it.
 
 =cut
 
 sub record_testresult {
-    my ($self, $res) = @_;
+    my ($self, $result, %args) = @_;
+    $result //= 'unk';
 
-    unless ($res && $res =~ /(ok|unk|fail)/) {
-        $res = 'unk';
+    # assign result as overall result unless it is already worse
+    my $current_result = \$self->{result};
+    if ($result eq 'fail') {
+        $$current_result = 'fail';
+    }
+    elsif ($result eq 'softfail') {
+        if (!$$current_result || $$current_result ne 'fail' || $args{force_status}) {
+            $$current_result = 'softfail';
+        }
+    }
+    elsif ($result && $result eq 'ok') {
+        $$current_result //= 'ok';
+    }
+    else {
+        # set $result to 'unk' if an invalid value has been specified
+        $result = 'unk';
     }
 
-    if ($res eq 'fail') {
-        $self->{result} = $res;
-    }
-    elsif ($res eq 'ok') {
-        $self->{result} ||= $res;
-    }
-
-    my $result = {result => $res,};
-
-    push @{$self->{details}}, $result;
+    # add detail
+    my $detail = {result => $result};
+    push(@{$self->{details}}, $detail);
     ++$self->{test_count};
-
-    return $result;
+    return $detail;
 }
 
 =head2 _result_add_screenshot
@@ -675,7 +687,7 @@ sub parse_serial_output_qemu {
 
             # Input parameters validation
             die "Wrong type defined for serial failure. Only 'soft' or 'hard' allowed. Got: $type" if $type !~ /^soft|hard|fatal$/;
-            die "Message not defined for serial failure for the pattern: '$regexp', type: $type"   if !defined $message;
+            die "Message not defined for serial failure for the pattern: '$regexp', type: $type" if !defined $message;
 
             # If you want to match a simple string please be sure that you create it with quotemeta
             if (!exists $regexp_matched{$regexp} and $line =~ /$regexp/) {

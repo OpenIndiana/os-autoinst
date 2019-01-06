@@ -15,8 +15,13 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package backend::qemu;
+
 use strict;
+use warnings;
+use autodie ':all';
+
 use base 'backend::virt';
+
 use File::Path 'mkpath';
 use File::Spec;
 use File::Which;
@@ -25,13 +30,12 @@ use IO::Select;
 use IO::Socket::UNIX 'SOCK_STREAM';
 use IO::Handle;
 use POSIX qw(strftime :sys_wait_h);
-use JSON;
+use Mojo::JSON;
 use Carp;
 use Fcntl;
 use Net::DBus;
 use bmwqemu qw(fileContent diag save_vars);
 require IPC::System::Simple;
-use autodie ':all';
 use Try::Tiny;
 use osutils qw(find_bin gen_params qv simple_run runcmd);
 use List::Util 'max';
@@ -68,7 +72,7 @@ sub raw_alive { shift->{proc}->_process->is_running }
 sub _wrap_hmc {
     my $cmdline = shift;
     return {
-        execute => 'human-monitor-command',
+        execute   => 'human-monitor-command',
         arguments => {'command-line' => $cmdline}};
 }
 sub start_audiocapture {
@@ -182,7 +186,7 @@ sub open_file_and_send_fd_to_qemu {
     my ($self, $path, $fdname) = @_;
     my $rsp;
 
-    my $fd = POSIX::open($path, &POSIX::O_CREAT | &POSIX::O_RDWR);
+    my $fd = POSIX::open($path, POSIX::O_CREAT() | POSIX::O_RDWR());
     die "Failed to open $path: $!" unless (defined $fd);
 
     $rsp = $self->handle_qmp_command(
@@ -203,7 +207,7 @@ sub set_migrate_capability {
                 capabilities => [
                     {
                         capability => $name,
-                        state => $state ? JSON::true : JSON::false,
+                        state      => $state ? Mojo::JSON::true : Mojo::JSON::false,
                     }]}
         },
         fatal => 1
@@ -214,7 +218,7 @@ sub _wait_while_status_is {
     my ($self, $status, $timeout, $fail_msg) = @_;
 
     my $rsp = $self->handle_qmp_command({execute => 'query-status'}, fatal => 1);
-    my $i = 0;
+    my $i   = 0;
     while ($rsp->{return}->{status} =~ $status) {
         $i += 1;
         if ($i > $timeout) {
@@ -239,7 +243,7 @@ sub _wait_for_migrate {
         sleep 0.5;
 
         $execution_time = gettimeofday - $migration_starttime;
-        $rsp = $self->handle_qmp_command({execute => "query-migrate"},
+        $rsp            = $self->handle_qmp_command({execute => "query-migrate"},
             fatal => 1);
 
         if ($rsp->{return}->{status} eq "failed") {
@@ -287,7 +291,7 @@ sub _migrate_to_file {
                 'compress-threads' => $compress_threads + 0,
                 # Ensure slow dump times are not due to a transfer rate cap
                 'max-bandwidth' => $max_bandwidth + 0,
-              }
+            }
         },
         fatal => 1
     );
@@ -300,7 +304,7 @@ sub _migrate_to_file {
     # migrate consumes the file descriptor, so we do not need to call closefd
     $self->handle_qmp_command(
         {
-            execute => 'migrate',
+            execute   => 'migrate',
             arguments => {uri => "fd:$fdname"}
         },
         fatal => 1
@@ -505,13 +509,17 @@ sub start_qemu {
 
     local *sp = sub { $self->{proc}->static_param(@_); };
 
+    if ($vars->{VIRTIO_CONSOLE} ne 0) {
+        $vars->{VIRTIO_CONSOLE} = 1;
+    }
+
     unless ($qemubin) {
         if ($vars->{QEMU}) {
             $qemubin = find_bin('/usr/bin/', 'qemu-system-' . $vars->{QEMU});
         }
         else {
             (my $class = $vars->{WORKER_CLASS} || '') =~ s/qemu_/qemu-system\-/g;
-            my @execs = qw(kvm qemu-kvm qemu qemu-system-x86_64 qemu-system-ppc64);
+            my @execs   = qw(kvm qemu-kvm qemu qemu-system-x86_64 qemu-system-ppc64);
             my %allowed = map { $_ => 1 } @execs;
             for (split(/\s*,\s*/, $class)) {
                 if ($allowed{$_}) {
@@ -597,7 +605,7 @@ sub start_qemu {
         $vars->{HDDMODEL} ||= "scsi-hd";
         $vars->{PATHCNT}  ||= 2;
     }
-    $vars->{NUMDISKS} ||= defined($vars->{RAIDLEVEL}) ? 4 : 1;
+    $vars->{NUMDISKS}  ||= defined($vars->{RAIDLEVEL}) ? 4 : 1;
     $vars->{HDDSIZEGB} ||= 10;
     $vars->{CDMODEL}   ||= "scsi-cd";
     $vars->{HDDMODEL}  ||= "virtio-blk";
@@ -664,7 +672,7 @@ sub start_qemu {
         # always set proper TAPDEV for os-autoinst when using tap network mode
         my $instance = ($vars->{WORKER_INSTANCE} || 'manual') eq 'manual' ? 255 : $vars->{WORKER_INSTANCE};
         # use $instance for tap name so it is predicable, network is still configured staticaly
-        $tapdev[$i] //= 'tap' . ($instance - 1 + $i * 64);
+        $tapdev[$i]  //= 'tap' . ($instance - 1 + $i * 64);
         $nicvlan[$i] //= 0;
     }
     push @tapscript,     "no" until @tapscript >= $num_networks;        #no TAPSCRIPT by default
@@ -845,6 +853,16 @@ sub start_qemu {
         sp('S');
     }
 
+    # Add parameters from QEMU_APPEND var, if any.
+    # The first item will have '-' prepended to it.
+    if ($vars->{QEMU_APPEND}) {
+        # Split multiple options, if needed
+        my @spl = split(' -', $vars->{QEMU_APPEND});
+        foreach my $i (@spl) {
+            sp(split(' ', $i));
+        }
+    }
+
     $self->{qemupipe}  = $self->{proc}->exec_qemu();
     $self->{qmpsocket} = $self->{proc}->connect_qmp();
     my $init = myjsonrpc::read_json($self->{qmpsocket});
@@ -929,7 +947,7 @@ sub handle_qmp_command {
     my $wb;
     my $sk = $self->{qmpsocket};
 
-    my $line = JSON::to_json($cmd) . "\n";
+    my $line = Mojo::JSON::to_json($cmd) . "\n";
     if (defined $optargs{send_fd}) {
         $wb = tinycv::send_with_fd($sk, $line, $optargs{send_fd});
     }
@@ -942,7 +960,7 @@ sub handle_qmp_command {
     while (!$hash) {
         $hash = myjsonrpc::read_json($sk);
         if ($hash->{event}) {
-            bmwqemu::diag "EVENT " . JSON::to_json($hash);
+            bmwqemu::diag "EVENT " . Mojo::JSON::to_json($hash);
             # ignore
             $hash = undef;
         }

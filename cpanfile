@@ -25,8 +25,7 @@ requires 'IO::Socket::UNIX';
 requires 'IPC::Open3';
 requires 'IPC::Run::Debug';
 requires 'IPC::System::Simple';
-requires 'JSON';
-requires 'JSON::XS';
+requires 'Cpanel::JSON::XS';
 requires 'List::MoreUtils';
 requires 'List::Util';
 requires 'Mojo::IOLoop::ReadWriteProcess', '0.21';
@@ -50,12 +49,14 @@ on 'test' => sub {
   requires 'Devel::Cover';
   requires 'File::Touch';
   requires 'Perl::Critic';
-  requires 'Perl::Tidy', '== 20180220';
+  requires 'Perl::Critic::Freenode';
+  requires 'Perl::Tidy', '== 20181120';
   requires 'Pod::Coverage';
   requires 'Test::Compile';
   requires 'Test::Fatal';
   requires 'Test::Mock::Time';
   requires 'Test::MockModule';
+  requires 'Test::Mojo';
   requires 'Test::More';
   requires 'Test::Output';
   requires 'Test::Pod';
@@ -63,6 +64,7 @@ on 'test' => sub {
   requires 'Test::Warnings';
   requires 'Test::Exception';
   requires 'Socket::MsgHdr';
+  requires 'XML::SemanticDiff';
 };
 
 feature 'coverage', 'coverage for travis' => sub {

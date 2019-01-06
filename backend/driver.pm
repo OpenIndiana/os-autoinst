@@ -20,14 +20,17 @@
 # in that 2nd process runs the actual backend, derived from backend::baseclass
 
 package backend::driver;
+
 use strict;
+use warnings;
+use autodie ':all';
+
 use Carp qw(cluck carp croak confess);
-use JSON 'to_json';
+use Mojo::JSON 'to_json';
 use File::Path 'remove_tree';
 use IO::Select;
 use POSIX '_exit';
 require IPC::System::Simple;
-use autodie ':all';
 use Mojo::IOLoop::ReadWriteProcess 'process';
 use Mojo::IOLoop::ReadWriteProcess::Session 'session';
 use myjsonrpc;
@@ -37,7 +40,7 @@ sub new {
     my ($class, $name) = @_;
     my $self = bless({class => $class}, $class);
 
-    require "backend/$name.pm";    ## no critic
+    require "backend/$name.pm";
     $self->{backend}      = "backend::$name"->new();
     $self->{backend_name} = $name;
 
@@ -158,7 +161,7 @@ sub _send_json {
     my ($self, $cmd) = @_;
     croak "no backend running" unless $self->{backend_process}->channel_in;
     my $token = myjsonrpc::send_json($self->{backend_process}->channel_in, $cmd);
-    my $rsp = myjsonrpc::read_json($self->{backend_process}->channel_out, $token);
+    my $rsp   = myjsonrpc::read_json($self->{backend_process}->channel_out, $token);
 
     unless (defined $rsp) {
         # this might have been closed by signal handler

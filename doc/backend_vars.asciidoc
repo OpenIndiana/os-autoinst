@@ -30,7 +30,8 @@ Variable;Values allowed;Default value;Explanation
 IPMI_HOSTNAME;string;Hostname/IP for IPMI interface;
 IPMI_PASSWORD;string;Password for the IPMI interface;
 IPMI_USER;string;Username for the IPMI interface;
-IPMI_DO_NOT_POWER_OFF;boolean;undef;Don't power off the machine after test
+IPMI_DO_NOT_POWER_OFF;boolean;undef;Don't power off the machine after test;
+IPMI_BACKEND_MC_RESET;boolean;undef;Reset ipmi main board before test for sol console stability
 |====================
 
 .QEMU backend
@@ -90,6 +91,7 @@ QEMU_COMPRESS_LEVEL;integer;6;Sets the compression level used for memory dumps a
 QEMU_COMPRESS_THREADS;integer;QEMUCPUS;Number of threads used for compressing memory dumps and snapshots.
 QEMU_MAX_BANDWIDTH;integer;INT_MAX;Limits the transfer rate during a snapshot.
 QEMU_DUMP_COMPRESS_METHOD;string;xz;The compression to use during a memory dump. Can be set to xz, bzip2 or internal (QEMU's internal compression, not compatible with crash or gdb). If xz is set, but not available, it will fallback to bzip2. Also see QEMU_COMPRESSION_LEVEL.
+QEMU_APPEND;string;;Append parameters on qemu command line. The first item will have '-' prepended to it.
 RAIDLEVEL;;;
 SKIPTO;full name of test module;;Restore VM from snapshot and continue by running specified test module. Needs HDD image with snapshots present
 TAPDEV;device name;undef;TAP device name to which virtual NIC should be connected. Usually undef so automatic matching is used
@@ -117,20 +119,21 @@ Variable;Values allowed;Default value;Explanation
 HDDSIZEGB;integer;15;Disk size in GB
 QEMUCPUS;integer;1;Number of CPUs to assign to VM
 QEMURAM;integer;1024;Size of RAM of VM in MiB
-VIRSH_HOSTNAME;string;SSH Host with virtsh;
+VIRSH_HOSTNAME;string;SSH Host with virsh;
 VIRSH_PASSWORD;string;Password for root account on above host;
 VIRSH_VMM_FAMILY;string;Host's hypervisor ('kvm', 'xen');
 VIRSH_VMM_TYPE;string;Host's hypervisor type ('hvm' for full virtualization on 'kvm' and 'xen' families, 'linux' for paravirtualization on 'xen' family);
 VIRSH_GUEST;string;Where to look for VNC server (SUT or VM);
+VIRSH_GUEST_PASSWORD;string;VNC password of the guest;
 VIRSH_INSTANCE;integer;VM's instance number on VIRSH_HOSTNAME;
 VMWARE_USERNAME;string;Administrator's username ('@' is '%40');
 VMWARE_PASSWORD;string;Administrator's password;
 VMWARE_HOST;string;VCS server for autentication;
-VMWARE_DATACENTER;string;VMware datacenter;
-VMWARE_SERVER;string;ESX server to start VM on;
 VMWARE_DATASTORE;string;VMware datastore;
+VMWARE_NFS_DATASTORE;string;VMware datastore with openQA NFS directories;
 VMWARE_SERIAL_PORT;string;TCP port where is VM's serial port stream to be expected on the ESX server;
 VMWARE_BRIDGE;string;VMware's bridge name (usual default is 'VM Network');
+VMWARE_REMOTE_VMM;string;
 HYPERV_USERNAME;string;Administrator account name;
 HYPERV_PASSWORD;string;Password for above account;
 HYPERV_SERVER;string;Windows Server (2008 R2, 2012 R2, or 2016) instance IP address;

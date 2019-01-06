@@ -14,10 +14,8 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package OpenQA::Isotovideo::NeedleDownloader;
-
-use strict;
-use warnings;
 use Mojo::Base -base;
+
 use Mojo::UserAgent;
 use Mojo::URL;
 use Mojo::File;
@@ -66,7 +64,7 @@ has openqa_url        => sub {
 
     return $url;
 };
-has ua => sub { Mojo::UserAgent->new };
+has ua             => sub { Mojo::UserAgent->new };
 has download_limit => 150;
 
 sub _add_download {

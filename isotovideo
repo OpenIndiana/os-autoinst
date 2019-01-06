@@ -48,6 +48,9 @@ automatically for convenience.
 =cut
 
 use strict;
+use warnings;
+use autodie ':all';
+no autodie 'kill';
 
 my $installprefix;    # $bmwqemu::scriptdir
 
@@ -56,7 +59,7 @@ BEGIN {
     $installprefix = undef;
 
     my ($wd) = $0 =~ m-(.*)/-;
-    $wd ||= '.';
+    $wd            ||= '.';
     $installprefix ||= $wd;
     unshift @INC, "$installprefix";
 }
@@ -69,8 +72,6 @@ use distribution;
 use testapi 'diag';
 use Getopt::Long;
 require IPC::System::Simple;
-use autodie ':all';
-no autodie 'kill';
 use POSIX qw(:sys_wait_h _exit);
 use Time::HiRes qw(gettimeofday tv_interval sleep time);
 use File::Spec;
@@ -224,11 +225,12 @@ unshift @INC, $bmwqemu::vars{CASEDIR} . '/lib';
 if ($bmwqemu::vars{SCHEDULE}) {
     diag 'Enforced test schedule by \'SCHEDULE\' variable in action';
     autotest::loadtest($_ . '.pm') foreach split(',', $bmwqemu::vars{SCHEDULE});
+    $bmwqemu::vars{INCLUDE_MODULES} = 'none';
 }
-elsif (-e $bmwqemu::vars{PRODUCTDIR} . '/main.pm') {
+if (-e $bmwqemu::vars{PRODUCTDIR} . '/main.pm') {
     require $bmwqemu::vars{PRODUCTDIR} . '/main.pm';
 }
-else {
+elsif (!$bmwqemu::vars{SCHEDULE}) {
     die '\'SCHEDULE\' not set and ' . $bmwqemu::vars{PRODUCTDIR} . '/main.pm not found, need one of both';
 }
 @INC = @oldINC;
@@ -384,11 +386,11 @@ bmwqemu::load_vars();
 if (!$return_code && $command_handler->test_completed && $bmwqemu::vars{BACKEND} eq 'qemu') {
     my @toextract;
     for my $i (1 .. $bmwqemu::vars{NUMDISKS}) {
-        my $dir = 'assets_private';
+        my $dir  = 'assets_private';
         my $name = $bmwqemu::vars{"STORE_HDD_$i"} || undef;
         unless ($name) {
             $name = $bmwqemu::vars{"PUBLISH_HDD_$i"} || undef;
-            $dir = 'assets_public';
+            $dir  = 'assets_public';
         }
         next unless $name;
         $name =~ /\.([[:alnum:]]+)$/;

@@ -15,10 +15,13 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package backend::svirt;
-use strict;
-use base ('backend::virt');
-use testapi qw(get_var get_required_var check_var);
 
+use strict;
+use warnings;
+
+use base 'backend::virt';
+
+use testapi qw(get_var get_required_var check_var);
 use IO::Select;
 
 # this is a fake backend to some extend. We don't start VMs, but provide ssh access
@@ -37,7 +40,7 @@ sub do_start_vm {
     my ($self) = @_;
 
     my $vars = \%bmwqemu::vars;
-    my $n = $vars->{NUMDISKS} || 1;
+    my $n    = $vars->{NUMDISKS} || 1;
     $vars->{NUMDISKS} ||= defined($vars->{RAIDLEVEL}) ? 4 : $n;
 
     # truncate the serial file
@@ -49,6 +52,7 @@ sub do_start_vm {
         'ssh-virtsh',
         {
             hostname => get_required_var('VIRSH_HOSTNAME'),
+            username => get_var('VIRSH_USERNAME'),
             password => get_var('VIRSH_PASSWORD'),
         });
 
@@ -72,8 +76,9 @@ sub do_stop_vm {
             $self->run_cmd("$ps Remove-VM -Force -VMName $vmname");
         }
         else {
-            $self->run_cmd("virsh destroy $vmname");
-            $self->run_cmd("virsh undefine $vmname");
+            my $libvirt_connector = get_var('VMWARE_REMOTE_VMM');
+            $self->run_cmd("virsh $libvirt_connector destroy $vmname");
+            $self->run_cmd("virsh $libvirt_connector undefine --snapshots-metadata $vmname");
         }
     }
     return {};
@@ -125,7 +130,7 @@ sub can_handle {
     my $vars = \%bmwqemu::vars;
     if ($args->{function} eq 'snapshots' && !check_var('HDDFORMAT', 'raw')) {
         # Snapshots via libvirt are supported on KVM and, perhaps, ESXi. Hyper-V uses native tools.
-        if (check_var('VIRSH_VMM_FAMILY', 'kvm') || check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
+        if (check_var('VIRSH_VMM_FAMILY', 'kvm') || check_var('VIRSH_VMM_FAMILY', 'hyperv') || check_var('VIRSH_VMM_FAMILY', 'vmware')) {
             return {ret => 1};
         }
     }
@@ -140,7 +145,8 @@ sub is_shutdown {
         $rsp = $self->run_cmd("powershell -Command \"if (\$(Get-VM -VMName $vmname \| Where-Object {\$_.state -eq 'Off'})) { exit 1 } else { exit 0 }\"");
     }
     else {
-        $rsp = $self->run_cmd("! virsh dominfo $vmname | grep -w 'shut off'");
+        my $libvirt_connector = get_var('VMWARE_REMOTE_VMM');
+        $rsp = $self->run_cmd("! virsh $libvirt_connector dominfo $vmname | grep -w 'shut off'");
     }
     return $rsp;
 }
@@ -156,10 +162,11 @@ sub save_snapshot {
         $rsp = $self->run_cmd("$ps Checkpoint-VM -VMName $vmname -SnapshotName $snapname");
     }
     else {
-        $self->run_cmd("virsh snapshot-delete $vmname $snapname");
-        $rsp = $self->run_cmd("virsh snapshot-create-as $vmname $snapname");
+        my $libvirt_connector = get_var('VMWARE_REMOTE_VMM');
+        $self->run_cmd("virsh $libvirt_connector snapshot-delete $vmname $snapname");
+        $rsp = $self->run_cmd("virsh $libvirt_connector snapshot-create-as $vmname $snapname");
     }
-    bmwqemu::diag "SAVE VM \"$vmname\" as \"$snapname\" snapshot, return code=$rsp";
+    bmwqemu::diag "SAVE VM $vmname as $snapname snapshot, return code=$rsp";
     die unless ($rsp == 0);
     return;
 }
@@ -186,14 +193,35 @@ sub load_snapshot {
         }
     }
     else {
-        $rsp = $self->run_cmd("virsh snapshot-revert $vmname $snapname");
+        my $libvirt_connector = get_var('VMWARE_REMOTE_VMM');
+        $rsp = $self->run_cmd("virsh $libvirt_connector snapshot-revert $vmname $snapname");
     }
-    bmwqemu::diag "LOAD snapshot \"$snapname\" to \"$vmname\", return code=$rsp";
+    bmwqemu::diag "LOAD snapshot $snapname to $vmname, return code=$rsp";
     die unless ($rsp == 0);
     return $rsp;
 }
 
-# Open another ssh connection to grab the serial console.
+sub read_credentials_from_virsh_variables {
+    my ($self) = @_;
+
+    my ($hostname, $username, $password);
+    if (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
+        $hostname = get_required_var('VIRSH_GUEST');
+        $password = get_var('VIRSH_GUEST_PASSWORD');
+    }
+    else {
+        $hostname = get_required_var('VIRSH_HOSTNAME');
+        $username = get_var('VIRSH_USERNAME');
+        $password = get_var('VIRSH_PASSWORD');
+    }
+    return {
+        hostname => $hostname,
+        username => ($username // 'root'),
+        password => $password,
+    };
+}
+
+# opens another SSH connection to grab the serial console for the serial log
 sub start_serial_grab {
     my ($self, $name) = @_;
 
@@ -208,12 +236,13 @@ sub start_serial_grab {
         $hostname = get_required_var('VIRSH_HOSTNAME');
         $password = get_var('VIRSH_PASSWORD');
     }
-    my $chan = $self->start_ssh_serial(hostname => $hostname, password => $password, username => 'root');
+    my $credentials = $self->read_credentials_from_virsh_variables;
+    my $chan        = $self->start_ssh_serial(%$credentials);
     if (check_var('VIRSH_VMM_FAMILY', 'vmware')) {
         # libvirt esx driver does not support `virsh console', so
         # we have to connect to VM's serial port via TCP which is
         # provided by ESXi server.
-        $chan->exec('nc ' . get_var('VMWARE_SERVER') . ' ' . get_var('VMWARE_SERIAL_PORT'));
+        $chan->exec('nc ' . get_var('VMWARE_HOST') . ' ' . get_var('VMWARE_SERIAL_PORT'));
     }
     elsif (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
         # Hyper-V does not support serial console export via TCP, just
@@ -224,6 +253,35 @@ sub start_serial_grab {
     else {
         $chan->exec('virsh console ' . $name);
     }
+}
+
+# opens another SSH connection to grab the serial console with the specified port
+sub open_serial_console_via_ssh {
+    my ($self, $name, $port) = @_;
+
+    bmwqemu::diag("Starting SSH connection to connect to libvirt domain $name via serial port $port");
+    my $credentials = $self->read_credentials_from_virsh_variables;
+    my $ssh         = $self->new_ssh_connection(%$credentials);
+    my $chan        = $ssh->channel();
+    die 'No channel found' unless $chan;
+    $chan->blocking(0);
+    $chan->pty('vt100', {echo => 1});
+    $chan->pty_size(1024, 24);
+    $chan->shell();
+    print($chan "PS1='# '\n");
+
+    # note: see comments in start_serial_grab for the special handling of vmware/hyperv
+    if (check_var('VIRSH_VMM_FAMILY', 'vmware')) {
+        $chan->exec('nc ' . get_var('VMWARE_SERVER') . ' ' . $port);
+    }
+    elsif (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
+        $chan->exec('nc ' . get_var('HYPERV_SERVER') . ' ' . $port);
+    }
+    else {
+        $chan->exec("virsh console \"$name\" \"serial$port\"");
+    }
+
+    return ($ssh, $chan);
 }
 
 sub check_socket {

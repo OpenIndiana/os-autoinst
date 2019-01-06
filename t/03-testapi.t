@@ -2,6 +2,7 @@
 
 use strict;
 use warnings;
+
 use consoles::console;
 use File::Temp;
 use OpenQA::Isotovideo::Interface;
@@ -24,7 +25,7 @@ ok(looks_like_number($OpenQA::Isotovideo::Interface::version), 'isotovideo versi
 
 my $cmds;
 use Test::MockModule;
-my $mod       = new Test::MockModule('myjsonrpc');
+my $mod       = Test::MockModule->new('myjsonrpc');
 my $fake_exit = 0;
 
 # define variables for 'fake_read_json'
@@ -76,7 +77,7 @@ sub fake_read_json {
                         image => 'fake image',
                         frame => 42,
                 }],
-              }
+            }
         };
     }
     elsif ($cmd eq 'backend_mouse_hide') {
@@ -96,15 +97,14 @@ $mod->mock(read_json => \&fake_read_json);
 
 use testapi qw(is_serial_terminal :DEFAULT);
 use basetest;
-my $mock_basetest = new Test::MockModule('basetest');
+my $mock_basetest = Test::MockModule->new('basetest');
 $mock_basetest->mock(_result_add_screenshot => sub { my ($self, $result) = @_; });
 $autotest::current_test = basetest->new();
 
 # we have to mock out wait_screen_change for the type_string tests
 # that use it, as it doesn't work with the fake send_json and read_json
-my $mod2 = new Test::MockModule('testapi');
+my $mod2 = Test::MockModule->new('testapi');
 
-## no critic (ProhibitSubroutinePrototypes)
 sub fake_wait_screen_change(&@) {
     my ($callback, $timeout) = @_;
     $callback->() if $callback;
@@ -148,7 +148,7 @@ $cmds = [];
 
 subtest 'type_string with wait_still_screen' => sub {
     my $wait_still_screen_called = 0;
-    my $module                   = new Test::MockModule('testapi');
+    my $module                   = Test::MockModule->new('testapi');
     $module->mock(wait_still_screen => sub { $wait_still_screen_called = 1; });
     type_string 'hallo', wait_still_screen => 1;
     is_deeply($cmds, [{cmd => 'backend_type_string', text => 'hallo', max_interval => 250}]);
@@ -170,8 +170,7 @@ type_password 'hallo', max_interval => 5;
 is_deeply($cmds, [{cmd => 'backend_type_string', max_interval => 5, text => 'hallo'}]);
 $cmds = [];
 
-#$mock_basetest->mock(record_soft_failure_result => sub {});
-my $mock_bmwqemu = new Test::MockModule('bmwqemu');
+my $mock_bmwqemu = Test::MockModule->new('bmwqemu');
 $mock_bmwqemu->mock(result_dir => File::Temp->newdir());
 
 is($autotest::current_test->{dents}, 0, 'no soft failures so far');
@@ -179,9 +178,11 @@ stderr_like(\&record_soft_failure, qr/record_soft_failure\(reason=undef\)/, 'sof
 is($autotest::current_test->{dents}, 1, 'soft failure recorded');
 stderr_like(sub { record_soft_failure('workaround for bug#1234') }, qr/record_soft_failure.*reason=.*workaround for bug#1234.*/, 'soft failure with reason');
 is($autotest::current_test->{dents}, 2, 'another');
-my $details = $autotest::current_test->{details}[-1];
-is($details->{title}, 'Soft Failed', 'title for soft failure added');
-like($details->{text}, qr/basetest-[0-9]+.*txt/, 'file for soft failure added');
+my $details    = $autotest::current_test->{details}[-1];
+my $details_ok = is($details->{title}, 'Soft Failed', 'title for soft failure added');
+$details_ok &= is($details->{result}, 'softfail', 'result correct');
+$details_ok &= like($details->{text}, qr/basetest-[0-9]+.*txt/, 'file for soft failure added');
+diag explain $details unless $details_ok;
 
 require distribution;
 testapi::set_distribution(distribution->new());
@@ -190,7 +191,7 @@ is(is_serial_terminal, 0,           'Not a serial terminal');
 is(current_console,    'a-console', 'Current console is the a-console');
 
 subtest 'script_run' => sub {
-    my $module = new Test::MockModule('bmwqemu');
+    my $module = Test::MockModule->new('bmwqemu');
     # just save ourselves some time during testing
     $module->mock(wait_for_one_more_screenshot => sub { sleep 0; });
 
@@ -223,10 +224,10 @@ subtest 'script_run' => sub {
 };
 
 subtest 'check_assert_screen' => sub {
-    my $mock_testapi = new Test::MockModule('testapi');
+    my $mock_testapi = Test::MockModule->new('testapi');
     $mock_testapi->mock(_handle_found_needle => sub { return $_[0] });
 
-    my $mock_tinycv = new Test::MockModule('tinycv');
+    my $mock_tinycv = Test::MockModule->new('tinycv');
     $mock_tinycv->mock(from_ppm => sub { return bless({} => __PACKAGE__); });
 
     stderr_like {
@@ -244,6 +245,8 @@ subtest 'check_assert_screen' => sub {
 
     subtest 'handle check_screen timeout' => sub {
         $cmds = [];
+        $autotest::current_test->{details} = [];
+
         ok(!check_screen('foo', 3, timeout => 2));
         is($report_timeout_called, 1, 'report_timeout called for check_screen');
         is_deeply($cmds, [{
@@ -254,11 +257,24 @@ subtest 'check_assert_screen' => sub {
                     cmd       => 'check_screen',
                 },
                 {
+                    cmd   => 'is_configured_to_pause_on_timeout',
+                    check => 1,
+                },
+                {
                     check => 1,
                     cmd   => 'report_timeout',
                     msg   => 'match=fake,tags timed out after 2 (check_screen)',
                     tags  => [qw(fake tags)],
-                }], 'RPC messages correct (especially check == 1)');
+                }], 'RPC messages correct (especially check == 1)') or diag explain $cmds;
+        is_deeply($autotest::current_test->{details}, [
+                {
+                    result     => 'unk',
+                    screenshot => 'basetest-17.png',
+                    frametime  => [qw(1.75 1.79)],
+                    tags       => [qw(fake tags)],
+                }
+        ], 'result (to create a new neede from) has been added')
+          or diag explain $autotest::current_test->{details};
     };
 
     $report_timeout_called = 0;
@@ -280,11 +296,15 @@ subtest 'check_assert_screen' => sub {
                     cmd       => 'check_screen',
                 },
                 {
+                    cmd   => 'is_configured_to_pause_on_timeout',
+                    check => 0,
+                },
+                {
                     check => 0,
                     cmd   => 'report_timeout',
                     msg   => 'match=fake,tags timed out after 2 (assert_screen)',
                     tags  => [qw(fake tags)],
-                }], 'RPC messages correct (especially check == 0)');
+                }], 'RPC messages correct (especially check == 0)') or diag explain $cmds;
 
         # simulate that we want to pause after timeout in the first place but fail as usual on 2nd attempt
         $report_timeout_called = 0;
@@ -309,7 +329,7 @@ ok(save_screenshot);
 is(match_has_tag,        undef, 'match_has_tag on no value -> undef');
 is(match_has_tag('foo'), undef, 'match_has_tag on not matched tag -> undef');
 subtest 'assert_and_click' => sub {
-    my $mock_testapi = new Test::MockModule('testapi');
+    my $mock_testapi = Test::MockModule->new('testapi');
     $mock_testapi->mock(assert_screen => {area => [{x => 1, y => 2, w => 3, h => 4}]});
     ok(assert_and_click('foo'));
     is_deeply($cmds->[-1], {cmd => 'backend_mouse_hide', offset => 0}, 'assert_and_click succeeds and hides mouse again -> undef return');
@@ -323,7 +343,7 @@ subtest 'record_info' => sub {
 
 sub script_output_test {
     my $is_serial_terminal = shift;
-    my $mock_testapi       = new Test::MockModule('testapi');
+    my $mock_testapi       = Test::MockModule->new('testapi');
     $testapi::serialdev = 'null';
     $mock_testapi->mock(type_string        => sub { return });
     $mock_testapi->mock(send_key           => sub { return });
@@ -368,7 +388,7 @@ subtest 'script_output' => sub {
 };
 
 subtest 'validate_script_output' => sub {
-    my $mock_testapi = new Test::MockModule('testapi');
+    my $mock_testapi = Test::MockModule->new('testapi');
     $mock_testapi->mock(script_output => sub { return 'output'; });
     ok(!validate_script_output('script', sub { m/output/ }), 'validating output with default timeout');
     ok(!validate_script_output('script', sub { m/output/ }, 30), 'specifying timeout');

@@ -13,19 +13,23 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 package consoles::virtio_screen;
+
 use 5.018;
+use strict;
 use warnings;
+use integer;
+
 use English -no_match_vars;
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
-use integer;
 use Carp 'croak';
 
 our $VERSION;
 
 sub new {
-    my ($class, $socket_fd) = @_;
+    my ($class, $socket_fd, $select_fd) = @_;
     my $self = bless {class => $class}, $class;
     $self->{socket_fd}    = $socket_fd;
+    $self->{select_fd}    = $select_fd;
     $self->{carry_buffer} = '';
     return $self;
 }
@@ -182,6 +186,7 @@ and { matched => 0, string => 'text from the terminal' } on failure.
 sub read_until {
     my ($self, $pattern, $timeout) = @_[0 .. 2];
     my $fd       = $self->{socket_fd};
+    my $sel_fd   = $self->{select_fd} || $fd;
     my %nargs    = @_[3 .. $#_];
     my $buflen   = $nargs{buffer_size} || 4096;
     my $overflow = $nargs{record_output} ? '' : undef;
@@ -197,7 +202,7 @@ sub read_until {
     bmwqemu::log_call(%nargs);
 
     my $rin = '';
-    vec($rin, fileno($fd), 1) = 1;
+    vec($rin, fileno($sel_fd), 1) = 1;
 
   READ: while (1) {
         $loops++;
@@ -207,7 +212,7 @@ sub read_until {
             for my $p (@$re) {
                 my $i = index($rbuf, $p);
                 if ($i >= 0) {
-                    $match = substr $rbuf, $i, length($p);
+                    $match    = substr $rbuf, $i, length($p);
                     $prematch = substr $rbuf, 0, $i;
                     $self->{carry_buffer} = substr $rbuf, $i + length($p);
                     last READ;
@@ -217,7 +222,7 @@ sub read_until {
         elsif ($rbuf =~ m/$re/) {
             # See match variable perf issues: http://bit.ly/2dbGrzo
             $prematch = substr $rbuf, 0, $LAST_MATCH_START[0];
-            $match = substr $rbuf, $LAST_MATCH_START[0], $LAST_MATCH_END[0] - $LAST_MATCH_START[0];
+            $match    = substr $rbuf, $LAST_MATCH_START[0], $LAST_MATCH_END[0] - $LAST_MATCH_START[0];
             $self->{carry_buffer} = substr $rbuf, $LAST_MATCH_END[0];
             last READ;
         }

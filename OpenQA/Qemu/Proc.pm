@@ -29,8 +29,12 @@ are static parameters which are stored as simple strings and mutable
 parameters which are represented as complex objects.
 
 =cut
+
 package OpenQA::Qemu::Proc;
 use Mojo::Base -base;
+
+use File::Basename;
+use File::Which;
 use Mojo::JSON qw(encode_json decode_json);
 use Mojo::File 'path';
 use OpenQA::Qemu::BlockDevConf;
@@ -100,7 +104,7 @@ sub configure_controllers {
     # deprecated for a long time.
     for my $var (qw(HDDMODEL CDMODEL)) {
         if ($vars->{$var} =~ /virtio-scsi.*/) {
-            die "Set $var to scsi-" . lc(substr($var, 0, 1)) . ' and SCSICONTROLLER to '
+            die "Set $var to scsi-" . lc(substr($var, 0, 1)) . 'd and SCSICONTROLLER to '
               . $vars->{$var};
         }
     }
@@ -110,7 +114,7 @@ sub configure_controllers {
     }
 
     my $scsi_con = $vars->{SCSICONTROLLER} || 0;
-    my $cc = $self->controller_conf;
+    my $cc       = $self->controller_conf;
 
     if ($scsi_con) {
         $cc->add_controller($scsi_con, 'scsi0');
@@ -133,7 +137,7 @@ sub configure_controllers {
 sub get_img_size {
     my ($self, $path) = @_;
     my $json = simple_run($self->qemu_img_bin, 'info', '--output=json', $path);
-    my $map = decode_json($json);
+    my $map  = decode_json($json);
 
     die 'No size field in: ' . Dumper($map) unless defined $map->{'virtual-size'};
 
@@ -163,6 +167,14 @@ sub configure_blockdevs {
         $size .= 'G' if defined($size);
 
         if (defined $backing_file) {
+            # Handle files compressed as *.xz
+            my ($name, $path, $ext) = fileparse($backing_file, ".xz");
+            if ($ext =~ qr /.xz/) {
+                die 'unxz was not found in PATH' unless defined which('unxz');
+                bmwqemu::diag("Extract XZ compressed file");
+                runcmd('nice', 'ionice', 'unxz', '-k', '-f', $backing_file);
+                $backing_file = $path . $name;
+            }
             $size //= $self->get_img_size($backing_file);
             $drive = $bdc->add_existing_drive($node_id, $backing_file, $hdd_model, $size);
         } else {
@@ -203,7 +215,7 @@ sub configure_blockdevs {
         my $i        = $k;
         $i =~ s/^ISO_//;
 
-        my $size = $self->get_img_size($addoniso);
+        my $size  = $self->get_img_size($addoniso);
         my $drive = $bdc->add_iso_drive("cd$i", $addoniso, $vars->{CDMODEL}, $size);
         $drive->serial("cd$i");
         # first connected cdrom gets ",bootindex=0 when booting from cdrom and
@@ -415,7 +427,7 @@ sub revert_to_snapshot {
 
     my $snapshot = $self->snapshot_conf->revert_to_snapshot($name);
     $bdc->for_each_drive(sub {
-            my $drive = shift;
+            my $drive     = shift;
             my $del_files = $bdc->revert_to_snapshot($drive, $snapshot);
 
             die "Snapshot $name not found for " . $drive->id unless defined($del_files);

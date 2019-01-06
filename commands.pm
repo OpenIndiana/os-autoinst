@@ -18,15 +18,15 @@ package commands;
 
 use strict;
 use warnings;
+use autodie ':all';
+
 require IPC::System::Simple;
 use Try::Tiny;
 use Socket;
 use POSIX '_exit', 'strftime';
-use autodie ':all';
-use JSON 'from_json';
 use myjsonrpc;
 use bmwqemu 'diag';
-use JSON 'encode_json';
+use Mojo::JSON 'to_json';
 
 BEGIN {
     # https://github.com/os-autoinst/openQA/issues/450
@@ -140,7 +140,7 @@ sub test_data {
 sub get_asset {
     my ($self) = @_;
 
-    my $path = join '/', $bmwqemu::vars{ASSETDIR}, $self->param('assettype'), $self->param('assetname');
+    my $path    = join '/', $bmwqemu::vars{ASSETDIR}, $self->param('assettype'), $self->param('assetname');
     my $relpath = $self->param('relpath');
     if (defined $relpath) {
         # do not allow .. in path
@@ -300,23 +300,22 @@ sub run_daemon {
             my ($time, $level, @lines) = @_;
             # Unfortunately $time doesn't have the precision we want. So we need to use Time::HiRes
             $time = gettimeofday;
-            return sprintf(strftime("[%FT%T.%%04d %Z] [$level] ", localtime($time)), 1000 * ($time - int($time))) . join("\n", @lines, '');
+            return sprintf(strftime("[%FT%T.%%03d %Z] [$level] ", localtime($time)), 1000 * ($time - int($time))) . join("\n", @lines, '');
         });
 
     # process json messages from isotovideo
     Mojo::IOLoop->singleton->reactor->io($isotovideo => sub {
             my ($reactor, $writable) = @_;
-            return if ($writable);
 
             my $isotovideo_response = myjsonrpc::read_json($isotovideo);
             my $clients             = app->defaults('clients');
             delete $isotovideo_response->{json_cmd_token};
 
-            app->log->debug('cmdsrv: broadcasting message from os-autoinst to all ws clients: ' . encode_json($isotovideo_response));
+            app->log->debug('cmdsrv: broadcasting message from os-autoinst to all ws clients: ' . to_json($isotovideo_response));
             for (keys %$clients) {
                 $clients->{$_}->send({json => $isotovideo_response});
             }
-    });
+    })->watch($isotovideo, 1, 0);    # watch only readable (and not writable)
 
     app->log->info("cmdsrv: daemon reachable under http://*:$port/$bmwqemu::vars{JOBTOKEN}/");
     try {

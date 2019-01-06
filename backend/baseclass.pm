@@ -16,10 +16,15 @@
 
 # this is an abstract class
 package backend::baseclass;
+
 use strict;
 use warnings;
+use feature 'say';
+use autodie ':all';
+
 use Carp qw(cluck carp confess);
-use JSON 'to_json';
+use Mojo::JSON;    # booleans
+use Cpanel::JSON::XS ();
 use File::Copy 'cp';
 use File::Basename;
 use Time::HiRes qw(gettimeofday time tv_interval);
@@ -27,14 +32,13 @@ use POSIX qw(_exit :sys_wait_h);
 use bmwqemu;
 use IO::Select;
 require IPC::System::Simple;
-use autodie ':all';
 use myjsonrpc;
 use Net::SSH2;
-use feature 'say';
 use OpenQA::Benchmark::Stopwatch;
 use MIME::Base64 'encode_base64';
 use List::Util 'min';
 use List::MoreUtils 'uniq';
+use Scalar::Util 'looks_like_number';
 
 # should be a singleton - and only useful in backend process
 our $backend;
@@ -51,7 +55,7 @@ __PACKAGE__->mk_accessors(
 
 sub new {
     my $class = shift;
-    my $self = bless({class => $class}, $class);
+    my $self  = bless({class => $class}, $class);
     $self->{started}              = 0;
     $self->{serialfile}           = "serial0";
     $self->{serial_offset}        = 0;
@@ -77,7 +81,7 @@ sub handle_command {
 
 sub die_handler {
     my $msg = shift;
-    cluck "DIE $msg\n";
+    bmwqemu::diag "Backend process died, backend errors are reported below in the following lines:\n$msg";
     $backend->stop_vm();
     $backend->close_pipes();
 }
@@ -307,6 +311,9 @@ sub start_encoder {
 
     $self->{encoder_pipe}->blocking(0);
 
+    open($self->{vtt_caption_file}, '>', "$cwd/video_time.vtt");
+    $self->{vtt_caption_file}->print("WEBVTT\n");
+
     return;
 }
 
@@ -404,6 +411,22 @@ sub cpu_stat {
     return [];
 }
 
+sub format_vtt_timestamp {
+    my ($self, $walltime) = @_;
+
+    my $frametime_ms = 1000 * $self->{video_frame_number} / 24;
+    my $caption      = "\n$self->{video_frame_number}\n";
+    # presentation time span (one frame)
+    $caption .= sprintf(POSIX::strftime("%T.%%03d", gmtime($frametime_ms / 1000)), $frametime_ms % 1000);
+    $frametime_ms += 1000 / 24;
+    $caption .= " --> ";
+    $caption .= sprintf(POSIX::strftime("%T.%%03d\n", gmtime($frametime_ms / 1000)), $frametime_ms % 1000);
+    # clock value as caption text
+    $caption .= sprintf(POSIX::strftime("[%FT%T.%%03d]\n", localtime($walltime)), 1000 * ($walltime - int($walltime)));
+
+    return $caption;
+}
+
 sub enqueue_screenshot {
     my ($self, $image) = @_;
 
@@ -426,6 +449,8 @@ sub enqueue_screenshot {
     $self->{min_image_similarity} = $sim if $sim < $self->{min_image_similarity};
     $self->{min_video_similarity} -= 1;
     $self->{min_video_similarity} = $sim if $sim < $self->{min_video_similarity};
+
+    $self->{vtt_caption_file}->print($self->format_vtt_timestamp(gettimeofday));
 
     # we have two different similarity levels - one (slightly higher value, based
     # t/data/user-settings-*) to determine if it's worth it to recheck needles
@@ -487,8 +512,8 @@ sub check_socket {
             my $rsp = {rsp => ($self->handle_command($cmd) // 0)};
             $rsp->{json_cmd_token} = $cmd->{json_cmd_token};
             if ($self->{rsppipe}) {    # the command might have closed it
-                my $JSON = JSON->new()->convert_blessed();
-                my $json = $JSON->encode($rsp);
+                my $cjx  = Cpanel::JSON::XS->new->convert_blessed();
+                my $json = $cjx->encode($rsp);
                 $self->{rsppipe}->print($json);
             }
         }
@@ -849,10 +874,8 @@ sub set_tags_to_assert {
     my $mustmatch = $args->{mustmatch};
     my $timeout   = $args->{timeout} // $bmwqemu::default_timeout;
 
-    # free all needle images (https://progress.opensuse.org/issues/15438)
-    for my $n (needle->all()) {
-        $n->{img} = undef;
-    }
+    # keep only the most recently used images (https://progress.opensuse.org/issues/15438)
+    needle::clean_image_cache();
 
     # get the array reference to all matching needles
     my $needles = [];
@@ -876,7 +899,7 @@ sub set_tags_to_assert {
     }
     elsif ($mustmatch) {
         $needles = needle::tags($mustmatch) || [];
-        @tags = ($mustmatch);
+        @tags    = ($mustmatch);
     }
 
     {    # remove duplicates
@@ -889,7 +912,7 @@ sub set_tags_to_assert {
         bmwqemu::diag("NO matching needles for $mustmatch");
     }
 
-    $self->assert_screen_deadline(time + $timeout);
+    $self->set_assert_screen_timeout($timeout);
     $self->assert_screen_fails([]);
     $self->assert_screen_needles($needles);
     $self->assert_screen_last_check(undef);
@@ -898,6 +921,12 @@ sub set_tags_to_assert {
     $self->assert_screen_tags(\@tags);
     $self->assert_screen_check($args->{check});
     return {tags => \@tags};
+}
+
+sub set_assert_screen_timeout {
+    my ($self, $timeout) = @_;
+    return bmwqemu::diag('set_assert_screen_timeout called with non-numeric timeout') unless looks_like_number($timeout);
+    $self->assert_screen_deadline(time + $timeout);
 }
 
 sub _time_to_assert_screen_deadline {
@@ -979,7 +1008,7 @@ sub check_asserted_screen {
     }
 
     $watch->start();
-    $watch->{debug} = 1;
+    $watch->{debug} = 0;
 
     my @registered_needles = grep { !$_->{unregistered} } @{$self->assert_screen_needles};
     my ($foundneedle, $failed_candidates) = $img->search(\@registered_needles, 0, $search_ratio, ($watch->{debug} ? $watch : undef));
@@ -995,9 +1024,12 @@ sub check_asserted_screen {
     }
 
     $watch->stop();
-    if ($watch->as_data()->{total_time} > $self->screenshot_interval && !$bmwqemu::vars{NO_DEBUG_IO}) {
-        bmwqemu::diag sprintf("WARNING: check_asserted_screen took %.2f seconds - make your needles more specific", $watch->as_data()->{total_time});
-        bmwqemu::diag "DEBUG_IO: \n" . $watch->summary();
+    if ($watch->as_data()->{total_time} > $self->screenshot_interval) {
+        bmwqemu::diag sprintf(
+            "WARNING: check_asserted_screen took %.2f seconds for %d candidate needles - make your needles more specific",
+            $watch->as_data()->{total_time},
+            scalar(@registered_needles));
+        bmwqemu::diag "DEBUG_IO: \n" . $watch->summary() if (!$bmwqemu::vars{NO_DEBUG_IO} && $watch->{debug});
     }
 
     if ($n < 0) {
@@ -1043,7 +1075,15 @@ sub check_asserted_screen {
             _reduce_to_biggest_changes($failed_screens, 20);
         }
     }
-    bmwqemu::diag('no match: ' . time_remaining_str($n));
+    my $no_match_diag = 'no match: ' . time_remaining_str($n);
+    if (my $best_candidate = $failed_candidates->[0]) {
+        $no_match_diag .= sprintf(
+            ", best candidate: %s (%.2f)",
+            $best_candidate->{needle}->{name},
+            1 - sqrt($best_candidate->{error})
+        );
+    }
+    bmwqemu::diag($no_match_diag);
     $self->assert_screen_last_check([$img, $search_ratio]);
     return;
 }
@@ -1094,7 +1134,7 @@ sub verify_image {
     my $imgpath   = $args->{imgpath};
     my $mustmatch = $args->{mustmatch};
 
-    my $img = tinycv::read($imgpath);
+    my $img     = tinycv::read($imgpath);
     my $needles = needle::tags($mustmatch) || [];
 
     my ($foundneedle, $failed_candidates) = $img->search($needles, 0, 1);
@@ -1112,7 +1152,7 @@ sub retry_assert_screen {
     }
     # reset timeout otherwise continue wait_forneedle might just fail if stopped too long than timeout
     if ($args->{timeout}) {
-        $self->assert_screen_deadline(time + $args->{timeout});
+        $self->set_assert_screen_timeout($args->{timeout});
     }
     $self->cont_vm;
     # do not need to retry in 5 seconds but contining SUT if continue_waitforneedle

@@ -22,7 +22,8 @@ use File::Temp 'tempdir';
 use File::Basename;
 use File::Path 'make_path';
 use Cwd 'abs_path';
-use JSON;
+use Mojo::JSON;    # booleans
+use Cpanel::JSON::XS ();
 
 BEGIN {
     unshift @INC, '..';
@@ -34,7 +35,7 @@ my $data_dir     = "$toplevel_dir/t/data";
 sub create_vars {
     my $data = shift;
     open(my $varsfh, '>', 'vars.json') || BAIL_OUT('can not create vars.json');
-    my $json = JSON->new->pretty->canonical;
+    my $json = Cpanel::JSON::XS->new->pretty->canonical;
     print $varsfh $json->encode($data);
     close($varsfh);
 }
@@ -43,7 +44,7 @@ sub read_vars {
     local $/;
     open(my $varsfh, '<', 'vars.json') || BAIL_OUT('can not open vars.json for reading');
     my $ret;
-    eval { $ret = JSON->new->relaxed->decode(<$varsfh>); };
+    eval { $ret = Cpanel::JSON::XS->new->relaxed->decode(<$varsfh>); };
     die "parse error in vars.json:\n$@" if $@;
     close($varsfh);
     return $ret;
@@ -100,6 +101,40 @@ subtest 'test PRJDIR default' => sub {
     ok(!$vars{DISTRI}, 'DISTRI not supplied and not set');
     is($vars{CASEDIR}, $dir,      'CASEDIR unchanged');
     is($vars{PRJDIR},  $data_dir, 'PRJDIR set to default');
+};
+
+subtest 'save_vars' => sub {
+    my $dir = "$data_dir/tests";
+    create_vars({CASEDIR => $dir, _SECRET_TEST => 'my_credentials'});
+    $bmwqemu::openqa_default_share = $data_dir;
+
+    eval {
+        use bmwqemu ();
+        bmwqemu::init;
+        bmwqemu::save_vars();
+    };
+    ok(!$@, 'init successful');
+
+    my %vars = %{read_vars()};
+    is($vars{_SECRET_TEST}, 'my_credentials', '_SECRET_TEST unchanged');
+    is($vars{CASEDIR},      $dir,             'CASEDIR unchanged');
+};
+
+subtest 'save_vars no_secret' => sub {
+    my $dir = "$data_dir/tests";
+    create_vars({CASEDIR => $dir, _SECRET_TEST => 'my_credentials'});
+    $bmwqemu::openqa_default_share = $data_dir;
+
+    eval {
+        use bmwqemu ();
+        bmwqemu::init;
+        bmwqemu::save_vars(no_secret => 1);
+    };
+    ok(!$@, 'init successful');
+
+    my %vars = %{read_vars()};
+    ok(!$vars{_SECRET_TEST}, '_SECRET_TEST not written to vars.json');
+    is($vars{CASEDIR}, $dir, 'CASEDIR unchanged');
 };
 
 done_testing;

@@ -14,10 +14,8 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package OpenQA::Isotovideo::CommandHandler;
-
-use strict;
-use warnings;
 use Mojo::Base 'Mojo::EventEmitter';
+
 use bmwqemu;
 use testapi 'diag';
 use OpenQA::Isotovideo::Interface;
@@ -29,10 +27,16 @@ has [qw(cmd_srv_fd backend_fd answer_fd)] => undef;
 # the name of the current test (full name includes category prefix, eg. installation-)
 has [qw(current_test_name current_test_full_name)];
 
+# the currently processed test API function
+has current_api_function => undef;
+
 # conditions when to pause
-has pause_test_name                => sub { $bmwqemu::vars{PAUSE_AT} };
-has pause_on_assert_screen_timeout => sub { $bmwqemu::vars{PAUSE_ON_ASSERT_SCREEN_TIMEOUT} // 0 };
-has pause_on_check_screen_timeout  => sub { $bmwqemu::vars{PAUSE_ON_CHECK_SCREEN_TIMEOUT} // 0 };
+has pause_test_name => sub { $bmwqemu::vars{PAUSE_AT} };
+# (set to name of a certain test module, with or without category)
+has pause_on_screen_mismatch => sub { $bmwqemu::vars{PAUSE_ON_SCREEN_MISMATCH} };
+# (set to 'assert_screen' or 'check_screen' where 'check_screen' includes 'assert_screen')
+has pause_on_next_command => sub { $bmwqemu::vars{PAUSE_ON_NEXT_COMMAND} // 0 };
+# (set to 0 or 1)
 
 # the reason why the test execution has paused or 0 if not paused
 has reason_for_pause => 0;
@@ -79,12 +83,18 @@ sub process_command {
 
 sub _postpone_backend_command_until_resumed {
     my ($self, $response) = @_;
-    my $cmd             = $response->{cmd};
-    my $reson_for_pause = $self->reason_for_pause;
-    return unless $reson_for_pause;
+    my $cmd              = $response->{cmd};
+    my $reason_for_pause = $self->reason_for_pause;
+
+    # check whether we're supposed to pause on the next command if there's no other reason to pause anyways
+    if (!$reason_for_pause && $self->pause_on_next_command) {
+        $self->reason_for_pause($reason_for_pause = "reached $cmd and pause on next command enabled");
+    }
+
+    return unless $reason_for_pause;
 
     # emit info
-    $self->_send_to_cmd_srv({paused => $response, reason => $reson_for_pause});
+    $self->_send_to_cmd_srv({paused => $response, reason => $reason_for_pause});
     diag("isotovideo: paused, so not passing $cmd to backend");
 
     # postpone execution of command
@@ -128,16 +138,27 @@ sub _pass_command_to_backend_unless_paused {
     die 'isotovideo: we need to implement a backend queue' if $self->backend_requester;
     $self->backend_requester($self->answer_fd);
 
-    $self->_send_to_cmd_srv({$backend_cmd => $response});
+    $self->_send_to_cmd_srv({
+            $backend_cmd         => $response,
+            current_api_function => $backend_cmd,
+    });
     $self->_send_to_backend({cmd => $backend_cmd, arguments => $response});
+    $self->current_api_function($backend_cmd);
+}
+
+sub _is_configured_to_pause_on_timeout {
+    my ($self, $response) = @_;
+    return 0 unless my $pause_on_screen_mismatch = $self->pause_on_screen_mismatch;
+
+    return 1 if ($pause_on_screen_mismatch eq 'check_screen');
+    return $response->{check} ? 0 : 1 if ($pause_on_screen_mismatch eq 'assert_screen');
+    return 0;
 }
 
 sub _handle_command_report_timeout {
     my ($self, $response) = @_;
 
-    my $supposed_to_pause
-      = $self->pause_on_check_screen_timeout || ($self->pause_on_assert_screen_timeout && !$response->{check});
-    if (!$supposed_to_pause) {
+    if (!$self->_is_configured_to_pause_on_timeout($response)) {
         $self->_respond({ret => 0});
         return;
     }
@@ -152,6 +173,14 @@ sub _handle_command_report_timeout {
     $self->postponed_command(undef);
 }
 
+sub _handle_command_is_configured_to_pause_on_timeout {
+    my ($self, $response) = @_;
+
+    $self->_respond({
+            ret => ($self->_is_configured_to_pause_on_timeout($response) ? 1 : 0)
+    });
+}
+
 sub _handle_command_set_pause_at_test {
     my ($self, $response) = @_;
     my $pause_test_name = $response->{name};
@@ -162,21 +191,21 @@ sub _handle_command_set_pause_at_test {
     $self->_respond_ok();
 }
 
-sub _handle_command_set_pause_on_assert_screen_timeout {
+sub _handle_command_set_pause_on_screen_mismatch {
     my ($self, $response) = @_;
-    my $pause_on_assert_screen_timeout = $response->{flag};
+    my $pause_on_screen_mismatch = $response->{pause_on};
 
-    $self->pause_on_assert_screen_timeout($pause_on_assert_screen_timeout);
-    $self->_send_to_cmd_srv({set_pause_on_assert_screen_timeout => $pause_on_assert_screen_timeout});
+    $self->pause_on_screen_mismatch($pause_on_screen_mismatch);
+    $self->_send_to_cmd_srv({set_pause_on_screen_mismatch => ($pause_on_screen_mismatch // Mojo::JSON->false)});
     $self->_respond_ok();
 }
 
-sub _handle_command_set_pause_on_check_screen_timeout {
+sub _handle_command_set_pause_on_next_command {
     my ($self, $response) = @_;
-    my $pause_on_check_screen_timeout = $response->{flag};
+    my $set_pause_on_next_command = ($response->{flag} ? 1 : 0);
 
-    $self->pause_on_check_screen_timeout($pause_on_check_screen_timeout);
-    $self->_send_to_cmd_srv({set_pause_on_check_screen_timeout => $pause_on_check_screen_timeout});
+    $self->pause_on_next_command($set_pause_on_next_command);
+    $self->_send_to_cmd_srv({set_pause_on_next_command => $set_pause_on_next_command});
     $self->_respond_ok();
 }
 
@@ -255,28 +284,49 @@ sub _handle_command_check_screen {
     $self->no_wait($response->{no_wait} // 0);
     return if $self->_postpone_backend_command_until_resumed($response);
 
-    $self->_send_to_cmd_srv({check_screen => $response->{mustmatch}});
+    my %arguments = (
+        mustmatch => $response->{mustmatch},
+        timeout   => $response->{timeout},
+        check     => $response->{check},
+    );
+    my $current_api_function = $response->{check} ? 'check_screen' : 'assert_screen';
+    $self->_send_to_cmd_srv({
+            check_screen         => \%arguments,
+            current_api_function => $current_api_function,
+    });
     $self->tags($bmwqemu::backend->_send_json(
             {
                 cmd       => 'set_tags_to_assert',
-                arguments => {
-                    mustmatch => $response->{mustmatch},
-                    timeout   => $response->{timeout},
-                    check     => $response->{check},
-                },
+                arguments => \%arguments,
             })->{tags});
+    $self->current_api_function($current_api_function);
+}
+
+sub _handle_command_set_assert_screen_timeout {
+    my ($self, $response) = @_;
+
+    my $timeout = $response->{timeout};
+    $self->_send_to_cmd_srv({set_assert_screen_timeout => $timeout});
+    $bmwqemu::backend->_send_json({
+            cmd       => 'set_assert_screen_timeout',
+            arguments => $timeout,
+    });
+    $self->_respond_ok();
 }
 
 sub _handle_command_status {
     my ($self, $response) = @_;
     $self->_respond({
-            tags                           => $self->tags,
-            running                        => $self->current_test_name,
-            current_test_full_name         => $self->current_test_full_name,
-            pause_test_name                => $self->pause_test_name,
-            pause_on_assert_screen_timeout => $self->pause_on_assert_screen_timeout,
-            pause_on_check_screen_timeout  => $self->pause_on_check_screen_timeout,
-            test_execution_paused          => $self->reason_for_pause,
+            tags                     => $self->tags,
+            running                  => $self->current_test_name,
+            current_test_full_name   => $self->current_test_full_name,
+            current_api_function     => $self->current_api_function,
+            pause_test_name          => $self->pause_test_name,
+            pause_on_screen_mismatch => ($self->pause_on_screen_mismatch // Mojo::JSON->false),
+            pause_on_next_command    => $self->pause_on_next_command,
+            test_execution_paused    => $self->reason_for_pause,
+            devel_mode_major_version => $OpenQA::Isotovideo::Interface::developer_mode_major_version,
+            devel_mode_minor_version => $OpenQA::Isotovideo::Interface::developer_mode_minor_version,
     });
 }
 

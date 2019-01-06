@@ -15,12 +15,15 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 package consoles::sshXtermIPMI;
-use base 'consoles::localXvnc';
+
 use strict;
 use warnings;
+use autodie ':all';
+
+use base 'consoles::localXvnc';
+
 use testapi 'get_required_var';
 require IPC::System::Simple;
-use autodie ':all';
 use File::Which;
 
 sub activate {
@@ -34,9 +37,29 @@ sub activate {
     my @command = $self->backend->ipmi_cmdline;
     push(@command, qw(sol activate));
     my $serial = $self->{args}->{serial};
-
-    my $cstr = join(' ', @command);
+    my $cstr   = join(' ', @command);
     $self->callxterm($cstr, "ipmitool:$testapi_console");
+}
+
+sub reset {
+    my ($self) = @_;
+
+    # Deactivate sol connection if it is activated
+    if ($self->{activated}) {
+        $self->backend->ipmitool("sol deactivate");
+        $self->{activated} = 0;
+    }
+    return;
+}
+
+sub do_mc_reset {
+    my ($self) = @_;
+
+    if ($self->{activated}) {
+        $self->backend->do_mc_reset;
+        $self->{activated} = 0;
+    }
+    return;
 }
 
 1;
